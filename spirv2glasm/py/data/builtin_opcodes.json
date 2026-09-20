@@ -1,0 +1,1055 @@
+{
+ "note": "builtinop.py -- read the BUILTIN-ID -> GLASM-opcode table out of the image.\n\n`f_7100f28a00` is the mapper the general builtin arm reaches:\n\n    OpExtInst -> a named intrinsic -> IR operation 0x36\n      -> f_7100f10a30's 0x36 arm passes the callee symbol's fields to\n         cg[1064][888] = f_7100fc1280\n      -> the general class arm calls f_7100fbab80\n      -> which calls profile[184] = f_7100f28a00 with W1 = the BUILTIN ID\n         (measured: 0xc24 for `max`, 0xc2c for `min`, 0x3ff for `abs`,\n          0xc9a for `sqrt`)\n\nand it ends, like every other builder, in `f_710004f530` with the GLASM opcode\nin the field-group temp's first word (notes/33).  Its switch is three jump\ntables plus a handful of direct compares; this decodes all of them.  `mask` is\nthe value it puts in `node[12]` alongside the opcode.\n\nArms that compute the opcode instead of moving a constant are reported as\n`DYN@<addr>` rather than guessed.\n",
+ "opcode_by_builtin_id": {
+  "0x3ff": {
+   "opcode": "0x63",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x447": {
+   "opcode": "0x65",
+   "mnemonic": "CEIL",
+   "mask": null
+  },
+  "0x448": {
+   "opcode": "0xa7",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x449": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x44a": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x44b": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x44c": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x44d": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x44e": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x44f": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x450": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x451": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x452": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x453": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x454": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x455": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x456": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x457": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x458": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x459": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x45a": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x45b": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x45c": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x45d": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x45e": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x45f": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x460": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x461": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x462": {
+   "opcode": "0x66",
+   "mnemonic": "COS",
+   "mask": "0xff"
+  },
+  "0x463": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x464": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x465": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x466": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x467": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x468": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x469": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x46a": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x46b": {
+   "opcode": "0x68",
+   "mnemonic": "DDX",
+   "mask": null
+  },
+  "0x46c": {
+   "opcode": "0x68",
+   "mnemonic": "DDX",
+   "mask": null
+  },
+  "0x46d": {
+   "opcode": "0x68",
+   "mnemonic": "DDX",
+   "mask": null
+  },
+  "0x46e": {
+   "opcode": "0x69",
+   "mnemonic": "DDY",
+   "mask": null
+  },
+  "0x46f": {
+   "opcode": "0x69",
+   "mnemonic": "DDY",
+   "mask": null
+  },
+  "0x470": {
+   "opcode": "0x69",
+   "mnemonic": "DDY",
+   "mask": null
+  },
+  "0x471": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x472": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x473": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x474": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x475": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x476": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x477": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x478": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x479": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x47a": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x47b": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x47c": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x47d": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x47e": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x47f": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x480": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x481": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x482": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x483": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x484": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x485": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x486": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x487": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x488": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x489": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x48a": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x48b": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x48c": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x48d": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x48e": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x48f": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x490": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x491": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x492": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x493": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x494": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x495": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x496": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x497": {
+   "opcode": "DYN@0xf28ca0",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x498": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x499": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x49a": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x49b": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x49c": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x49d": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x49e": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x49f": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x4a0": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x4a1": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x4a2": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x4a3": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x4a4": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x4a5": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x4a6": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x4a7": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x4a8": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x4a9": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x4aa": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x4ab": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x4ac": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x4ad": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x4ae": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x4af": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0x4b0": {
+   "opcode": "0x6a",
+   "mnemonic": "EX2",
+   "mask": "0xff"
+  },
+  "0x4b1": {
+   "opcode": "0x6b",
+   "mnemonic": "EXP",
+   "mask": "0xff"
+  },
+  "0x6e1": {
+   "opcode": "0x6e",
+   "mnemonic": "FLR",
+   "mask": null
+  },
+  "0x6e6": {
+   "opcode": "0xac",
+   "mnemonic": "MAD",
+   "mask": null
+  },
+  "0x6ea": {
+   "opcode": "0x6f",
+   "mnemonic": "FRC",
+   "mask": null
+  },
+  "0xbd0": {
+   "opcode": "0x74",
+   "mnemonic": "LIT",
+   "mask": null
+  },
+  "0xc0e": {
+   "opcode": "0x72",
+   "mnemonic": "LG2",
+   "mask": "0xff"
+  },
+  "0xc0f": {
+   "opcode": "0x75",
+   "mnemonic": "LOG",
+   "mask": "0xff"
+  },
+  "0xc10": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc11": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc12": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc13": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc14": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc15": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc16": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc17": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc18": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc19": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc1a": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc1b": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc1c": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc1d": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc1e": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc1f": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc20": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc21": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc22": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc23": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc24": {
+   "opcode": "0x8d",
+   "mnemonic": "MAX",
+   "mask": null
+  },
+  "0xc25": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc26": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc27": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc28": {
+   "opcode": "0x3d",
+   "mnemonic": "BAR",
+   "mask": null
+  },
+  "0xc29": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc2a": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc2b": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc2c": {
+   "opcode": "0x8e",
+   "mnemonic": "MIN",
+   "mask": null
+  },
+  "0xc2d": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc2e": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc2f": {
+   "opcode": "0x90",
+   "mnemonic": "MUL",
+   "mask": null
+  },
+  "0xc30": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc31": {
+   "opcode": "0x91",
+   "mnemonic": "MUL.HI",
+   "mask": null
+  },
+  "0xc32": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc33": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc34": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc35": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc36": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc37": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc38": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc39": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc3a": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc3b": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc3c": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc3d": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc3e": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc3f": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc40": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc41": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc42": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc43": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc44": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc45": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc46": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc47": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc48": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc49": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc4a": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc4b": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc4c": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc4d": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc4e": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc4f": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc50": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc51": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc52": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc53": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc54": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc55": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc56": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc57": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc58": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc59": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc5a": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc5b": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc5c": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc5d": {
+   "opcode": "0x93",
+   "mnemonic": "POW",
+   "mask": "0xff"
+  },
+  "0xc99": {
+   "opcode": "0x6c",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xc9a": {
+   "opcode": "0x7c",
+   "mnemonic": "RSQ",
+   "mask": "0xff"
+  },
+  "0xcce": {
+   "opcode": "0x47",
+   "mnemonic": "MOV",
+   "mask": null
+  },
+  "0xccf": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xcd0": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xcd1": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xcd2": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xcd3": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xcd4": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xcd5": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xcd6": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xcd7": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xcd8": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xcd9": {
+   "opcode": "DYN@0xf28b68",
+   "mnemonic": "?",
+   "mask": null
+  },
+  "0xcda": {
+   "opcode": "0x82",
+   "mnemonic": "SSG",
+   "mask": null
+  },
+  "0xcdb": {
+   "opcode": "0x7f",
+   "mnemonic": "SIN",
+   "mask": "0xff"
+  },
+  "0xcdc": {
+   "opcode": "0x80",
+   "mnemonic": "?",
+   "mask": "0xffff"
+  },
+  "0xea2": {
+   "opcode": "0x6c",
+   "mnemonic": "?",
+   "mask": null
+  }
+ }
+}

@@ -1,22 +1,6 @@
-# Build every probe shader from source with glslang 16.6.0 (pinned), convert
-# it with the Python converter, and compare byte for byte with the expected
-# listing (spirv2glasm/tools/probecheck.py).  No SPIR-V is kept in the
-# repository.
-#
-# LAYOUT: the repository root holds only this .github/ folder and the
-# project folder spirv2glasm/; every project path below is under it, and the
-# check runs with spirv2glasm/ as its working directory.  The probe sources
-# and their expected listings travel as ONE archive, spirv2glasm/probes.7z
-# (probes/ and listings/ inside), which the first step unpacks.
-#
-# glslang is PINNED to a release, not `main`: the expected listings are the
-# oracle's output for 16.6.0's SPIR-V, and a moving glslang could change the
-# SPIR-V (and so the listing) without any change here.  The release's
-# prebuilt Linux package is downloaded and checked against its SHA-256.
-name: probes
+name: Validate probes
 
 on:
-  push:
   pull_request:
   workflow_dispatch:
 

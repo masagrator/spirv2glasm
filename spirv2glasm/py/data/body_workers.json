@@ -1,0 +1,936 @@
+{
+ "note": "Every body-scope handler with the worker it tails into and the constants it sets on the way, extracted mechanically by simulating each arm (tools/handlers.py).  Each arm is two or three instructions -- load the operand pointer, put a code in a register, branch -- so the constant IS the compiler's own code for the operation.  `w4` into f_7100fcf930 is the BINARY operator code and `w3` into f_7100fcf694 the UNARY one (notes/08); the `w3` that accompanies a binary code is a second, per-opcode number the worker also takes.  `ops` lists every SPIR-V opcode that reaches the handler.",
+ "handlers": {
+  "0xfdcde0": {
+   "worker": "0x7100f1c6a0",
+   "consts": {
+    "w2": "0x1",
+    "w3": "0x1f41"
+   },
+   "opcodes": [
+    "OpSourceContinued",
+    "OpSource",
+    "OpSourceExtension",
+    "OpName",
+    "OpMemberName",
+    "OpString",
+    "9",
+    "OpExtension",
+    "OpExtInstImport",
+    "13",
+    "OpMemoryModel",
+    "OpEntryPoint",
+    "OpExecutionMode",
+    "OpCapability",
+    "18",
+    "OpTypeVoid",
+    "OpTypeBool",
+    "OpTypeInt",
+    "OpTypeFloat",
+    "OpTypeVector",
+    "OpTypeMatrix",
+    "OpTypeImage",
+    "OpTypeSampler",
+    "OpTypeSampledImage",
+    "OpTypeArray",
+    "OpTypeRuntimeArray",
+    "OpTypeStruct",
+    "OpTypeOpaque",
+    "OpTypePointer",
+    "OpTypeFunction",
+    "OpTypeEvent",
+    "OpTypeDeviceEvent",
+    "OpTypeReserveId",
+    "OpTypeQueue",
+    "OpTypePipe",
+    "OpTypeForwardPointer",
+    "40",
+    "OpConstantTrue",
+    "OpConstantFalse",
+    "OpConstant",
+    "OpConstantComposite",
+    "OpConstantSampler",
+    "47",
+    "53",
+    "OpFunction",
+    "OpFunctionParameter",
+    "OpFunctionEnd",
+    "58",
+    "OpCopyMemorySized",
+    "OpGenericPtrMemSemantics",
+    "OpInBoundsPtrAccessChain",
+    "OpDecorate",
+    "OpMemberDecorate",
+    "OpDecorationGroup",
+    "OpGroupDecorate",
+    "OpGroupMemberDecorate",
+    "76",
+    "85",
+    "108",
+    "OpConvertPtrToU",
+    "OpSatConvertSToU",
+    "OpSatConvertUToS",
+    "OpConvertUToPtr",
+    "OpPtrCastToGeneric",
+    "OpGenericCastToPtr",
+    "OpGenericCastToPtrExplicit",
+    "125",
+    "153",
+    "OpIsFinite",
+    "OpIsNormal",
+    "OpSignBitSet",
+    "OpLessOrGreater",
+    "OpOrdered",
+    "OpUnordered",
+    "192",
+    "193",
+    "206",
+    "216",
+    "217",
+    "222",
+    "223",
+    "226",
+    "OpAtomicCompareExchangeWeak",
+    "243",
+    "244",
+    "OpLabel",
+    "258",
+    "OpGroupAsyncCopy",
+    "OpGroupWaitEvents",
+    "OpGroupIAdd",
+    "OpGroupFAdd",
+    "OpGroupFMin",
+    "OpGroupUMin",
+    "OpGroupSMin",
+    "OpGroupFMax",
+    "OpGroupUMax",
+    "OpGroupSMax",
+    "272",
+    "273",
+    "OpReadPipe",
+    "OpWritePipe",
+    "OpReservedReadPipe",
+    "OpReservedWritePipe",
+    "OpReserveReadPipePackets",
+    "OpReserveWritePipePackets",
+    "OpCommitReadPipe",
+    "OpCommitWritePipe",
+    "OpIsValidReserveId",
+    "OpGetNumPipePackets",
+    "OpGetMaxPipePackets",
+    "OpGroupReserveReadPipePackets",
+    "OpGroupReserveWritePipePackets",
+    "OpGroupCommitReadPipe",
+    "OpGroupCommitWritePipe",
+    "289",
+    "290",
+    "OpEnqueueMarker",
+    "OpEnqueueKernel",
+    "OpGetKernelNDrangeSubGroupCount",
+    "OpGetKernelNDrangeMaxSubGroupSize",
+    "OpGetKernelWorkGroupSize",
+    "OpGetKernelPreferredWorkGroupSizeMultiple",
+    "OpRetainEvent",
+    "OpReleaseEvent",
+    "OpCreateUserEvent",
+    "OpIsValidEvent",
+    "OpSetUserEventStatus",
+    "OpCaptureEventProfilingInfo",
+    "OpGetDefaultQueue",
+    "OpBuildNDRange",
+    "OpAtomicFlagTestAndSet",
+    "OpAtomicFlagClear",
+    "OpSizeOf",
+    "OpTypePipeStorage",
+    "OpConstantPipeStorage",
+    "OpCreatePipeFromPipeStorage",
+    "OpGetKernelLocalSizeForSubgroupCount",
+    "OpGetKernelMaxNumSubgroups",
+    "OpTypeNamedBarrier",
+    "OpNamedBarrierInitialize",
+    "OpMemoryNamedBarrier",
+    "OpModuleProcessed",
+    "OpExecutionModeId",
+    "OpDecorateId",
+    "367",
+    "368",
+    "369",
+    "370",
+    "371",
+    "372",
+    "373",
+    "374",
+    "375",
+    "376",
+    "377",
+    "378",
+    "379",
+    "380",
+    "381",
+    "382",
+    "383",
+    "384",
+    "385",
+    "386",
+    "387",
+    "388",
+    "389",
+    "390",
+    "391",
+    "392",
+    "393",
+    "394",
+    "395",
+    "396",
+    "397",
+    "398",
+    "399"
+   ]
+  },
+  "0xfdc558": {
+   "worker": "0x7100fd6ee0",
+   "consts": {},
+   "opcodes": [
+    "OpGroupNonUniformElect",
+    "OpGroupNonUniformAll",
+    "OpGroupNonUniformAny",
+    "OpGroupNonUniformAllEqual",
+    "OpGroupNonUniformBroadcast",
+    "OpGroupNonUniformBroadcastFirst",
+    "OpGroupNonUniformBallot",
+    "OpGroupNonUniformInverseBallot",
+    "OpGroupNonUniformBallotBitExtract",
+    "OpGroupNonUniformBallotBitCount",
+    "OpGroupNonUniformBallotFindLSB",
+    "OpGroupNonUniformBallotFindMSB",
+    "OpGroupNonUniformShuffle",
+    "OpGroupNonUniformShuffleXor",
+    "OpGroupNonUniformShuffleUp",
+    "OpGroupNonUniformShuffleDown",
+    "OpGroupNonUniformIAdd",
+    "OpGroupNonUniformFAdd",
+    "OpGroupNonUniformIMul",
+    "OpGroupNonUniformFMul",
+    "OpGroupNonUniformSMin",
+    "OpGroupNonUniformUMin",
+    "OpGroupNonUniformFMin",
+    "OpGroupNonUniformSMax",
+    "OpGroupNonUniformUMax",
+    "OpGroupNonUniformFMax",
+    "OpGroupNonUniformBitwiseAnd",
+    "OpGroupNonUniformBitwiseOr",
+    "OpGroupNonUniformBitwiseXor",
+    "OpGroupNonUniformLogicalAnd",
+    "OpGroupNonUniformLogicalOr",
+    "OpGroupNonUniformLogicalXor",
+    "OpGroupNonUniformQuadBroadcast",
+    "OpGroupNonUniformQuadSwap"
+   ]
+  },
+  "0xfdc5b0": {
+   "worker": "0x7100fd71e0",
+   "consts": {},
+   "opcodes": [
+    "OpImageSampleImplicitLod",
+    "OpImageSampleExplicitLod",
+    "OpImageSampleDrefImplicitLod",
+    "OpImageSampleDrefExplicitLod",
+    "OpImageSampleProjImplicitLod",
+    "OpImageSampleProjExplicitLod",
+    "OpImageSampleProjDrefImplicitLod",
+    "OpImageSampleProjDrefExplicitLod",
+    "OpImageFetch",
+    "OpImageGather",
+    "OpImageDrefGather",
+    "OpImageRead",
+    "OpImageWrite",
+    "OpImageQueryFormat",
+    "OpImageQueryOrder",
+    "OpImageQuerySizeLod",
+    "OpImageQuerySize",
+    "OpImageQueryLod",
+    "OpImageQueryLevels",
+    "OpImageQuerySamples",
+    "OpImageSparseSampleImplicitLod",
+    "OpImageSparseSampleExplicitLod",
+    "OpImageSparseSampleDrefImplicitLod",
+    "OpImageSparseSampleDrefExplicitLod",
+    "OpImageSparseSampleProjImplicitLod",
+    "OpImageSparseSampleProjExplicitLod",
+    "OpImageSparseSampleProjDrefImplicitLod",
+    "OpImageSparseSampleProjDrefExplicitLod",
+    "OpImageSparseFetch",
+    "OpImageSparseGather",
+    "OpImageSparseDrefGather",
+    "OpImageSparseRead"
+   ]
+  },
+  "0xfdc600": {
+   "worker": "0x7100fd1210",
+   "consts": {},
+   "opcodes": [
+    "OpTranspose",
+    "OpQuantizeToF16",
+    "OpFRem",
+    "OpFMod",
+    "OpOuterProduct",
+    "OpDot",
+    "OpIAddCarry",
+    "OpISubBorrow",
+    "OpUMulExtended",
+    "OpSMulExtended",
+    "OpAny",
+    "OpAll",
+    "OpIsNan",
+    "OpIsInf",
+    "OpBitFieldInsert",
+    "OpBitFieldSExtract",
+    "OpBitFieldUExtract",
+    "OpBitReverse",
+    "OpBitCount",
+    "OpDPdx",
+    "OpDPdy",
+    "OpFwidth",
+    "OpDPdxFine",
+    "OpDPdyFine",
+    "OpFwidthFine",
+    "OpDPdxCoarse",
+    "OpDPdyCoarse",
+    "OpFwidthCoarse",
+    "OpGroupAll",
+    "OpGroupAny",
+    "OpImageSparseTexelsResident"
+   ]
+  },
+  "0xfdc69c": {
+   "worker": "0x7100fd6510",
+   "consts": {},
+   "opcodes": [
+    "OpAtomicLoad",
+    "OpAtomicExchange",
+    "OpAtomicCompareExchange",
+    "OpAtomicIIncrement",
+    "OpAtomicIDecrement",
+    "OpAtomicIAdd",
+    "OpAtomicISub",
+    "OpAtomicSMin",
+    "OpAtomicUMin",
+    "OpAtomicSMax",
+    "OpAtomicUMax",
+    "OpAtomicAnd",
+    "OpAtomicOr",
+    "OpAtomicXor"
+   ]
+  },
+  "0xfdc62c": {
+   "worker": "0x7100fcf420",
+   "consts": {},
+   "opcodes": [
+    "OpConvertFToU",
+    "OpConvertFToS",
+    "OpConvertSToF",
+    "OpConvertUToF",
+    "OpUConvert",
+    "OpSConvert",
+    "OpFConvert"
+   ]
+  },
+  "0xfdc644": {
+   "worker": "0x7100fcf930",
+   "consts": {
+    "w4": "0x20"
+   },
+   "opcodes": [
+    "OpIMul",
+    "OpFMul",
+    "OpVectorTimesScalar",
+    "OpMatrixTimesScalar",
+    "OpVectorTimesMatrix",
+    "OpMatrixTimesVector",
+    "OpMatrixTimesMatrix"
+   ]
+  },
+  "0xfdc660": {
+   "worker": "0x7100fce770",
+   "consts": {},
+   "opcodes": [
+    "OpConstantNull",
+    "OpSpecConstantTrue",
+    "OpSpecConstantFalse",
+    "OpSpecConstant",
+    "OpSpecConstantComposite"
+   ]
+  },
+  "0xfdc6b4": {
+   "worker": "0x7100fcf930",
+   "consts": {
+    "w10": "0x68",
+    "w4": "0x28"
+   },
+   "opcodes": [
+    "OpUGreaterThan",
+    "OpSGreaterThan",
+    "OpFOrdGreaterThan",
+    "OpFUnordGreaterThan"
+   ]
+  },
+  "0xfdc6e4": {
+   "worker": "0x7100fcf930",
+   "consts": {
+    "w10": "0x68",
+    "w4": "0x2a"
+   },
+   "opcodes": [
+    "OpUGreaterThanEqual",
+    "OpSGreaterThanEqual",
+    "OpFOrdGreaterThanEqual",
+    "OpFUnordGreaterThanEqual"
+   ]
+  },
+  "0xfdc714": {
+   "worker": "0x7100fcf930",
+   "consts": {
+    "w10": "0x68",
+    "w4": "0x27"
+   },
+   "opcodes": [
+    "OpULessThan",
+    "OpSLessThan",
+    "OpFOrdLessThan",
+    "OpFUnordLessThan"
+   ]
+  },
+  "0xfdc744": {
+   "worker": "0x7100fcf930",
+   "consts": {
+    "w10": "0x68",
+    "w4": "0x29"
+   },
+   "opcodes": [
+    "OpULessThanEqual",
+    "OpSLessThanEqual",
+    "OpFOrdLessThanEqual",
+    "OpFUnordLessThanEqual"
+   ]
+  },
+  "0xfdc570": {
+   "worker": "0x7100fcc16c",
+   "consts": {},
+   "opcodes": [
+    "OpNop",
+    "OpLifetimeStart",
+    "OpLifetimeStop"
+   ]
+  },
+  "0xfdc7c4": {
+   "worker": "0x7100fcf930",
+   "consts": {
+    "w4": "0x21"
+   },
+   "opcodes": [
+    "OpUDiv",
+    "OpSDiv",
+    "OpFDiv"
+   ]
+  },
+  "0xfdc7d0": {
+   "worker": "0x7100fcf930",
+   "consts": {
+    "w4": "0x22"
+   },
+   "opcodes": [
+    "OpUMod",
+    "OpSRem",
+    "OpSMod"
+   ]
+  },
+  "0xfdc7dc": {
+   "worker": "0x7100fcf930",
+   "consts": {
+    "w10": "0x68",
+    "w4": "0x2b"
+   },
+   "opcodes": [
+    "OpIEqual",
+    "OpFOrdEqual",
+    "OpFUnordEqual"
+   ]
+  },
+  "0xfdc80c": {
+   "worker": "0x7100fcf930",
+   "consts": {
+    "w10": "0x68",
+    "w4": "0x2c"
+   },
+   "opcodes": [
+    "OpINotEqual",
+    "OpFOrdNotEqual",
+    "OpFUnordNotEqual"
+   ]
+  },
+  "0xfdc848": {
+   "worker": "0x7100fd4810",
+   "consts": {},
+   "opcodes": [
+    "OpAccessChain",
+    "OpInBoundsAccessChain"
+   ]
+  },
+  "0xfdc860": {
+   "worker": "0x7100fd2f34",
+   "consts": {},
+   "opcodes": [
+    "OpCopyObject",
+    "OpCopyLogical"
+   ]
+  },
+  "0xfdc874": {
+   "worker": "0x7100fcf694",
+   "consts": {
+    "w3": "0x17"
+   },
+   "opcodes": [
+    "OpSNegate",
+    "OpFNegate"
+   ]
+  },
+  "0xfdc880": {
+   "worker": "0x7100fcf930",
+   "consts": {
+    "w4": "0x23"
+   },
+   "opcodes": [
+    "OpIAdd",
+    "OpFAdd"
+   ]
+  },
+  "0xfdc88c": {
+   "worker": "0x7100fcf930",
+   "consts": {
+    "w4": "0x24"
+   },
+   "opcodes": [
+    "OpISub",
+    "OpFSub"
+   ]
+  },
+  "0xfdc898": {
+   "worker": "0x7100fcf930",
+   "consts": {
+    "w4": "0x26"
+   },
+   "opcodes": [
+    "OpShiftRightLogical",
+    "OpShiftRightArithmetic"
+   ]
+  },
+  "0xfdc98c": {
+   "worker": "0x7100fcc300",
+   "consts": {},
+   "opcodes": [
+    "OpUndef"
+   ]
+  },
+  "0xfdc99c": {
+   "worker": "0x7100fd1af4",
+   "consts": {},
+   "opcodes": [
+    "OpLine"
+   ]
+  },
+  "0xfdc9ac": {
+   "worker": "0x7100fd1ee0",
+   "consts": {},
+   "opcodes": [
+    "OpExtInst"
+   ]
+  },
+  "0xfdc9c4": {
+   "worker": "0x7100fcef00",
+   "consts": {},
+   "opcodes": [
+    "OpSpecConstantOp"
+   ]
+  },
+  "0xfdc9dc": {
+   "worker": "0x7100fd5d20",
+   "consts": {},
+   "opcodes": [
+    "OpFunctionCall"
+   ]
+  },
+  "0xfdc9f4": {
+   "worker": "0x7100fd3160",
+   "consts": {},
+   "opcodes": [
+    "OpVariable"
+   ]
+  },
+  "0xfdca0c": {
+   "worker": "0x7100fdb550",
+   "consts": {},
+   "opcodes": [
+    "OpImageTexelPointer"
+   ]
+  },
+  "0xfdca20": {
+   "worker": "0x7100fd2544",
+   "consts": {},
+   "opcodes": [
+    "OpLoad"
+   ]
+  },
+  "0xfdca34": {
+   "worker": "0x7100fd2980",
+   "consts": {},
+   "opcodes": [
+    "OpStore"
+   ]
+  },
+  "0xfdca48": {
+   "worker": "0x7100fd2d30",
+   "consts": {},
+   "opcodes": [
+    "OpCopyMemory"
+   ]
+  },
+  "0xfdca5c": {
+   "worker": "0x7100fd44a4",
+   "consts": {},
+   "opcodes": [
+    "OpPtrAccessChain"
+   ]
+  },
+  "0xfdca74": {
+   "worker": "0x7100fdb890",
+   "consts": {},
+   "opcodes": [
+    "OpArrayLength"
+   ]
+  },
+  "0xfdca88": {
+   "worker": "0x7100fcf930",
+   "consts": {
+    "w3": "0x4d",
+    "w4": "0x12"
+   },
+   "opcodes": [
+    "OpVectorExtractDynamic"
+   ]
+  },
+  "0xfdca98": {
+   "worker": "0x7100fd52f8",
+   "consts": {},
+   "opcodes": [
+    "OpVectorInsertDynamic"
+   ]
+  },
+  "0xfdcaac": {
+   "worker": "0x7100fcff80",
+   "consts": {},
+   "opcodes": [
+    "OpVectorShuffle"
+   ]
+  },
+  "0xfdcac4": {
+   "worker": "0x7100fda9f0",
+   "consts": {},
+   "opcodes": [
+    "OpCompositeConstruct"
+   ]
+  },
+  "0xfdcadc": {
+   "worker": "0x7100fd0520",
+   "consts": {},
+   "opcodes": [
+    "OpCompositeExtract"
+   ]
+  },
+  "0xfdcaf4": {
+   "worker": "0x7100fd0b38",
+   "consts": {},
+   "opcodes": [
+    "OpCompositeInsert"
+   ]
+  },
+  "0xfdcb0c": {
+   "worker": "0x7100fdbe58",
+   "consts": {},
+   "opcodes": [
+    "OpSampledImage"
+   ]
+  },
+  "0xfdcb20": {
+   "worker": "0x7100fdbfe0",
+   "consts": {},
+   "opcodes": [
+    "OpImage"
+   ]
+  },
+  "0xfdcb34": {
+   "worker": "0x7100fda63c",
+   "consts": {},
+   "opcodes": [
+    "OpBitcast"
+   ]
+  },
+  "0xfdcb48": {
+   "worker": "0x7100fcf930",
+   "consts": {
+    "w3": "0xa4",
+    "w4": "0x2b"
+   },
+   "opcodes": [
+    "OpLogicalEqual"
+   ]
+  },
+  "0xfdcb58": {
+   "worker": "0x7100fcf930",
+   "consts": {
+    "w3": "0xa5",
+    "w4": "0x2c"
+   },
+   "opcodes": [
+    "OpLogicalNotEqual"
+   ]
+  },
+  "0xfdcb68": {
+   "worker": "0x7100fcf930",
+   "consts": {
+    "w3": "0xa6",
+    "w4": "0x32"
+   },
+   "opcodes": [
+    "OpLogicalOr"
+   ]
+  },
+  "0xfdcb78": {
+   "worker": "0x7100fcf930",
+   "consts": {
+    "w3": "0xa7",
+    "w4": "0x30"
+   },
+   "opcodes": [
+    "OpLogicalAnd"
+   ]
+  },
+  "0xfdcb94": {
+   "worker": "0x7100fcf694",
+   "consts": {
+    "w3": "0x1a"
+   },
+   "opcodes": [
+    "OpLogicalNot"
+   ]
+  },
+  "0xfdcba0": {
+   "worker": "0x7100fd0e54",
+   "consts": {
+    "w3": "0x2"
+   },
+   "opcodes": [
+    "OpSelect"
+   ]
+  },
+  "0xfdcbb8": {
+   "worker": "0x7100fcf930",
+   "consts": {
+    "w3": "0xc4",
+    "w4": "0x25"
+   },
+   "opcodes": [
+    "OpShiftLeftLogical"
+   ]
+  },
+  "0xfdcbc8": {
+   "worker": "0x7100fcf930",
+   "consts": {
+    "w3": "0xc5",
+    "w4": "0x2f"
+   },
+   "opcodes": [
+    "OpBitwiseOr"
+   ]
+  },
+  "0xfdcbd8": {
+   "worker": "0x7100fcf930",
+   "consts": {
+    "w3": "0xc6",
+    "w4": "0x2e"
+   },
+   "opcodes": [
+    "OpBitwiseXor"
+   ]
+  },
+  "0xfdcbe8": {
+   "worker": "0x7100fcf930",
+   "consts": {
+    "w3": "0xc7",
+    "w4": "0x2d"
+   },
+   "opcodes": [
+    "OpBitwiseAnd"
+   ]
+  },
+  "0xfdcc04": {
+   "worker": "0x7100fcf694",
+   "consts": {
+    "w3": "0x19"
+   },
+   "opcodes": [
+    "OpNot"
+   ]
+  },
+  "0xfdcc1c": {
+   "worker": "0x7100fd6da0",
+   "consts": {},
+   "opcodes": [
+    "OpEmitVertex"
+   ]
+  },
+  "0xfdcc2c": {
+   "worker": "0x7100fd6da0",
+   "consts": {},
+   "opcodes": [
+    "OpEndPrimitive"
+   ]
+  },
+  "0xfdcc3c": {
+   "worker": "0x7100fd6da0",
+   "consts": {},
+   "opcodes": [
+    "OpEmitStreamVertex"
+   ]
+  },
+  "0xfdcc4c": {
+   "worker": "0x7100fd6da0",
+   "consts": {},
+   "opcodes": [
+    "OpEndStreamPrimitive"
+   ]
+  },
+  "0xfdcc6c": {
+   "worker": "0x7100fdb070",
+   "consts": {},
+   "opcodes": [
+    "OpControlBarrier"
+   ]
+  },
+  "0xfdcc84": {
+   "worker": "0x7100fdae74",
+   "consts": {},
+   "opcodes": [
+    "OpMemoryBarrier"
+   ]
+  },
+  "0xfdcc98": {
+   "worker": "0x7100fd6bd0",
+   "consts": {},
+   "opcodes": [
+    "OpAtomicStore"
+   ]
+  },
+  "0xfdccac": {
+   "worker": "0x7100fdb1b0",
+   "consts": {},
+   "opcodes": [
+    "OpPhi"
+   ]
+  },
+  "0xfdccc4": {
+   "worker": "0x7100ee3b20",
+   "consts": {
+    "w1": "0x38",
+    "w2": "0x1",
+    "w27": "0x68",
+    "w9": "0x2"
+   },
+   "opcodes": [
+    "OpLoopMerge"
+   ]
+  },
+  "0xfdcd20": {
+   "worker": "0x7100ee3b20",
+   "consts": {
+    "w1": "0x18",
+    "w2": "0x1",
+    "w27": "0x68",
+    "w9": "0x1"
+   },
+   "opcodes": [
+    "OpSelectionMerge"
+   ]
+  },
+  "0xfdce34": {
+   "worker": "0x7100f8c810",
+   "consts": {
+    "w10": "0x68"
+   },
+   "opcodes": [
+    "OpBranch"
+   ]
+  },
+  "0xfdce08": {
+   "worker": "0x7100fd5a00",
+   "consts": {},
+   "opcodes": [
+    "OpBranchConditional"
+   ]
+  },
+  "0xfdceb8": {
+   "worker": "0x7100fd56d8",
+   "consts": {},
+   "opcodes": [
+    "OpSwitch"
+   ]
+  },
+  "0xfdced4": {
+   "worker": "0x7100f3d950",
+   "consts": {
+    "w1": "0x9"
+   },
+   "opcodes": [
+    "OpKill"
+   ]
+  },
+  "0xfdcee0": {
+   "worker": "0x7100f3d950",
+   "consts": {
+    "w1": "0x8"
+   },
+   "opcodes": [
+    "OpReturn"
+   ]
+  },
+  "0xfdce20": {
+   "worker": "0x7100fd6420",
+   "consts": {},
+   "opcodes": [
+    "OpReturnValue"
+   ]
+  },
+  "0xfdcf18": {
+   "worker": "0x7100f2eaa0",
+   "consts": {},
+   "opcodes": [
+    "OpUnreachable"
+   ]
+  },
+  "0xfdcd68": {
+   "worker": "0x7100fdc09c",
+   "consts": {
+    "w2": "0x107"
+   },
+   "opcodes": [
+    "OpGroupBroadcast"
+   ]
+  },
+  "0xfdcd80": {
+   "worker": "0x7100fcc16c",
+   "consts": {},
+   "opcodes": [
+    "OpNoLine"
+   ]
+  }
+ }
+}
