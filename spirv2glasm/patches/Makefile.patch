@@ -1,0 +1,38 @@
+--- Makefile
++++ Makefile
+@@ -136,10 +136,17 @@
+ # glasm2sass -- the GLASM->SASS converter.  It links the same library the CLI
+ # does; the difference between them is entirely in runtime/g2s_hook.c, which is
+ # part of the library and is inert until a listing is installed.
++# spirv2glasm -- the ORACLE for a SPIR-V -> GLASM converter.  Same shape as
++# glasm2sass: it links the library and reports what the compiler's own front
++# end did, so a converter written elsewhere has something to be measured
++# against.  See tools/spirv2glasm.c for why the stock CLI cannot do this.
++SPIRV2GLASM_SRC := tools/spirv2glasm.c
++SPIRV2GLASM     := $(BUILD_DIR)/spirv2glasm
++
+ GLASM2SASS_SRC := tools/glasm2sass.c
+ GLASM2SASS     := $(BUILD_DIR)/glasm2sass
+ 
+-.PHONY: all clean test cli glasm2sass
++.PHONY: all clean test cli glasm2sass spirv2glasm
+ all: $(LIB)
+ 
+ # The archive is built under a TEMPORARY NAME and renamed into place, because
+@@ -193,6 +200,16 @@
+ 	@echo LD  $@
+ 	$(Q)$(CC) $(CFLAGS) $(LDFLAGS) -rdynamic -o $@ $(BUILD_DIR)/glasm2sass.o $(LIB) $(LDLIBS)
+ 
++# `make spirv2glasm` -- the oracle.  Seconds, once the library exists.
++spirv2glasm: $(SPIRV2GLASM)
++
++$(SPIRV2GLASM): $(SPIRV2GLASM_SRC) $(LIB)
++	@$(MKDIR_P)
++	@echo CC  $(SPIRV2GLASM_SRC)
++	$(Q)$(CC) $(CPPFLAGS) $(CFLAGS) -c $(SPIRV2GLASM_SRC) -o $(BUILD_DIR)/spirv2glasm.o
++	@echo LD  $@
++	$(Q)$(CC) $(CFLAGS) $(LDFLAGS) -rdynamic -o $@ $(BUILD_DIR)/spirv2glasm.o $(LIB) $(LDLIBS)
++
+ $(CLI): $(CLI_SRC) $(LIB)
+ 	@$(MKDIR_P)
+ 	@echo CC  $(CLI_SRC)
