@@ -1,19 +1,45 @@
 # Progress report
 
 **notes/114: the full corpus, module by module.**  The oracle's listings are
-being generated for all 14,630 and compared as they land (11,414 done, DIFFERS
-fixed as they appear).  Seven causes so far: a family edge is pushed at the head
-like every other; a scalar lane of a construct stored whole to an output reads
-the lane's source; a load retargeted into a local is forwarded as the local's
-register; a swizzle of lanes a merge's pair passed through keeps the name; the
+generated for ALL 14,630 now, and 14,000 of them are compared and clean.
+Fourteen causes so far: a family edge is pushed at the head like every other;
+a scalar lane of a construct stored whole to an output reads the lane's
+source; a load retargeted into a local is forwarded as the local's register;
+a swizzle of lanes a merge's pair passed through keeps the name; the
 CONDITION records are members of the R class's live array (no edge, no
-register, but a slot); a static load's record is numbered AT ITS READER,
-two under one reader in the reader's operand order; and a plain copy is
-transparent to a later read of a lane stored from it.
+register, but a slot); a static load's record is numbered AT ITS READER, two
+under one reader in the reader's operand order; a plain copy is transparent
+to a later read of a lane stored from it; an anti-dependence is made for the
+component its writer is the LAST to write, so a write that a later write
+covers again drops behind the writers that keep one; a handle pair's two
+loads are stamped after their OR, in its operand order; negative zero keeps
+its sign; a merge chain is ordered at the reader's OWN line, not pass 1's; a
+value read through a selector has no self-move; a constant goes straight
+into a position lane; and a scalar interface operand is a whole scalar
+value, so it goes straight to the lane.
 
-`tools/recnum.py` is what read the last one: it pairs the two sides by each
-record's (first def, last use, mask) rather than by number, so a numbering
-difference is visible as itself.
+Three tools read these rather than fitting them.  `tools/recnum.py` pairs
+the two sides' records by (first def, last use, mask) rather than by number,
+so a numbering difference is visible as itself -- it is what read the load
+numbering and the merge-chain key (which agrees with the compiler on all 40
+sampled shaders, where the old key missed four).  `tools/waredge.py` scores
+candidate anti-dependence orders against every reader in a trace, which
+rejected the two keys that fitted one listing and cost probes.
+`tools/gsum.py` supplied the `node[36]` stamps behind the handle pair.
+
+THE LAST 630 LISTINGS, generated last, had never been compared: 310 of them
+differ, in register numbering and in where a flush or self-move sits.  Three
+are written up in notes/114 with their evidence, including one whose obvious
+fix makes the right record but prints it in the wrong place -- left open
+rather than guessed.
+
+`tools/p2check.py` (new) says where the rest of that work is: it runs our
+pass 2 on the COMPILER's own blocks -- its stamps, its `entry[68]`, its
+edges -- against the order it printed them in.  Every block of every shader
+tried so far comes out identical (1,082 of 1,082 in one of the differing
+ones), so the selector is right and what is left is LOWERING and ALLOCATION:
+a record the compiler makes and we do not, or a register we colour
+differently, which then adds an anti-dependence pass 2 obeys.
 
 Probes 627/627, corpus sample 120/120, slice exact 962 / DIFFERS 0, all
 unchanged.

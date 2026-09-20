@@ -895,13 +895,31 @@ class ImageOps(object):
         4 colouring (py/ifg.py `allocate_long`) picks the registers."""
         module = self.module
         _off = _handle_offset(module, var, "a sampler with no Binding")
+        _n0 = len(self.lines)
         d = self._handle_load(_off)
         if _svar is not None:
             _soff = _handle_offset(module, _svar,
                                    "a separate sampler with no Binding")
+            _n1 = len(self.lines)
             _ds = self._handle_load(_soff)
             _do = self._next_handle()
             self.lines.append(_emit(_HANDLE_OR, "%s.x" % _do, d, _ds))
+            # EACH HANDLE LOAD IS MADE AFTER THE OR, IN THE OR'S OPERAND
+            # ORDER, like any load substituted into a statement (notes/87):
+            # `ps_a.frag`'s OR is `node[36]` 1 and its two loads 3 and 5,
+            # `map_87cc6750.frag`'s 52 and 54, 56 (`tools/gsum.py`) -- the
+            # texture's first.  Tied to one stamp the pair's order falls to
+            # pass 1's list, which reverses it where the loads are far
+            # enough apart.  `G2S_NOHANDLESEQ=1` leaves them tied.
+            if not ENV.get("G2S_NOHANDLESEQ"):
+                for _k, _ln, _made in ((1, _n0, _n1 > _n0),
+                                       (2, _n1, len(self.lines) - 1 > _n1)):
+                    if not _made:
+                        continue
+                    _tg = _sched.Tie()
+                    _tg.seq = _n0 + 0.001 * _k
+                    _tg.append(_ln)
+                    self.ties.append(_tg)
             return _do
         return d
 
