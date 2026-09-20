@@ -112,14 +112,15 @@ the whole listing.
 
 | sample | flags | result |
 |---|---|---|
-| 90 probes: vertex, fragment, geometry (every input x output primitive), tess control, tess evaluation (every mode x spacing), integer ops, textures, control flow, UBO, SSBO | `--opt-level none --debug-info g2` (fat) | **90 / 90, all three checks** |
+| the 90 probes of the time: vertex, fragment, geometry (every input x output primitive), tess control, tess evaluation (every mode x spacing), integer ops, textures, control flow, UBO, SSBO | `--opt-level none --debug-info g2` (fat) | **90 / 90, all three checks** |
 | the same 90, SASS check only | `--opt-level none --debug-info none --output-thin-gpu-binaries` | **90 / 90 identical** |
-| **10,328 shaders from the 14,706-shader corpus** | `--opt-level none --debug-info g2` (fat) | **10,328 / 10,328, all three checks** (`corpus/RESULTS.md`) |
+| **10,328 shaders from the 14,706-shader corpus** (what an older `mkcorpus.py` compiled) | `--opt-level none --debug-info g2` (fat) | **10,328 / 10,328, all three checks** (`corpus/RESULTS.md`) |
 
 ### The corpus, and what it took to use it
 
 The 14,706-shader corpus is the sample that matters, and out of the box glslang
-rejects every one of them.  `corpus/mkcorpus.py` gets 10,328 through; its header
+rejects every one of them.  `corpus/mkcorpus.py` gets 14,630 through (glslang
+15.1.0); its header
 comment states every edit and what each is forced by.  In short: `#version` is
 moved to the front (a whole family in the corpus puts an `#extension` before
 it, which GLSLC accepts and glslang does not), the two NVN-only extensions are
@@ -128,13 +129,19 @@ compiled with **Vulkan** semantics because what
 `GL_NV_separate_texture_types` gives them -- separate `texture2D` and `sampler`
 objects combined at the point of use -- is ordinary GLSL there.
 
-The 4,378 that do not convert are one cause almost entirely: **4,358 use
-bindless texture handles** (`sampler2D(uint64_t(x))`), and glslang refuses to
-emit SPIR-V for that at all -- `'GL_ARB_bindless_texture' : not allowed when
-using generating SPIR-V codes`.  That is a limit of glslang, not of this tool:
-`spirv2glasm` compiles bindless SPIR-V perfectly well when something else
-produces it, and the listings show it (`LDC.U64 D0.x, buf14[0]`,
-`TEX.F R0, ..., handle(D0.x), 2D`).
+Most of the corpus uses **bindless texture handles**
+(`sampler2D(uint64_t(x))`), and glslang refuses to emit SPIR-V for those at
+all -- `'GL_ARB_bindless_texture' : not allowed when using generating SPIR-V
+codes`.  That is a limit of glslang, not of this tool: `spirv2glasm` compiles
+bindless SPIR-V perfectly well when something else produces it, and the
+listings show it (`LDC.U64 D0.x, buf14[0]`, `TEX.F R0, ..., handle(D0.x),
+2D`).  `mkcorpus.py` rewrites the constructor to `sampler2D(Tex, Smpl)`,
+pairing the texture with the sampler declared at its binding, and makes an
+fp16 narrowing explicit that glslang will not do implicitly.  An older
+version, without those two edits, got 10,328 through.  The 76 that still do
+not convert: 72 bindless shaders with no sampler to pair with, 3 using
+`GL_NV_bindless_texture`, 1 with a std140 alignment error
+(`corpus/README.md`).
 
 `probes/mkprobes.py` remains, and is complementary rather than a substitute: a
 probe whose only difference from its neighbour is `vec4` against `vec3`

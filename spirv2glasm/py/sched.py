@@ -522,7 +522,7 @@ def _merge_partner(items, j):
     return None
 
 
-def edges(items, passthru=frozenset()):
+def edges(items, passthru=frozenset(), with_made=False):
     """Def-use and anti-dependence edges, by the rule at 0x4ac2c.
 
     `items` is the lines in the order the converter created them.  An edge
@@ -546,6 +546,8 @@ def edges(items, passthru=frozenset()):
             continue
         g.write_after_read(i, dst, dmask)
         g.write_after_write(i, dst, dmask)
+    if with_made:
+        return g.finish() + (g.made,)
     return g.finish()
 
 
@@ -1280,9 +1282,11 @@ def _order_pre_flat(lines, allocated=None, cuts=(), ties=(), passthru=(),
             out.extend(emitted)
             continue
         t68 = dict((i, r * CYCLE) for r, i in enumerate(emitted))
+        made = None
         if list_edges:
-            _list_order_edges(eitems, emitted, passthru, succ, pred)
-        _register_family_edges(items, emitted, succ, pred)
+            made = _list_order_edges(eitems, emitted, passthru, succ, pred)
+        _register_family_edges(items, emitted, succ, pred,
+                               None if _FAMILYAPPEND else made)
         got = _pass2(items, emitted, seq, t68, succ, pred)
         if _os.environ.get("G2S_P2DBG") and list_edges and any(
                 _os.environ["G2S_P2DBG"] in (body[i] or "") for i in emitted):
@@ -1363,9 +1367,9 @@ def _list_order_edges(eitems, emitted, passthru, succ, pred):
     replacing the block's creation-order ones.  PUSHED AT THE HEAD
     (0x4acb8): a producer's successor list is the REVERSE of the order the
     sweep made the edges in."""
-    bs, _np = edges([eitems[i] for i in emitted],
-                    frozenset(k for k, i in enumerate(emitted)
-                              if i in passthru))
+    bs, _np, made = edges([eitems[i] for i in emitted],
+                          frozenset(k for k, i in enumerate(emitted)
+                                    if i in passthru), with_made=True)
     for i in emitted:
         succ[i] = []
         pred[i] = []
@@ -1373,16 +1377,38 @@ def _list_order_edges(eitems, emitted, passthru, succ, pred):
         for b in reversed(lst):
             succ[emitted[a]].append(emitted[b])
             pred[emitted[b]].append(emitted[a])
+    # when each edge was made, by the block's own indices -> the global ones
+    # (`_register_family_edges` places its edges among them)
+    return dict(((emitted[a], emitted[b]), k) for (a, b), k in made.items())
 
 
-def _chain(succ, pred, p_, i):
-    """A kind-1 edge p_ -> i, unless there is one."""
-    if p_ is not None and i not in succ[p_]:
+def _chain(succ, pred, p_, i, made=None, pos=None):
+    """A kind-1 edge p_ -> i, unless there is one.
+
+    PUSHED AT THE HEAD, like every edge (`_EdgeBuilder.add`): with `made`
+    (the block's edges and when the sweep made them) the edge is made in the
+    forward sweep at `i`, after `i`'s reads -- key `(0, pos of i, 1)` -- and
+    goes where that puts it in `p_`'s list, the latest-made first.
+    `chr_skin_069bf064.vert`: `result.attrib[7]`'s list is `attrib[4].w`
+    (t68 416) before `attrib[5].x` (400) -- both kind 1, after the kind-2
+    edge to the local's copy (`tools/gsum.py`, node 47.21).  Without `made`
+    it is appended, as before; `G2S_FAMILYAPPEND=1` forces that."""
+    if p_ is None or i in succ[p_]:
+        return
+    pred[i].append(p_)
+    if made is None:
         succ[p_].append(i)
-        pred[i].append(p_)
+        return
+    key = (0, pos[i], 1)
+    made[(p_, i)] = key
+    lst = succ[p_]
+    k = 0
+    while k < len(lst) and made.get((p_, lst[k]), (2,)) >= key:
+        k += 1
+    lst.insert(k, i)
 
 
-def _register_family_edges(items, emitted, succ, pred):
+def _register_family_edges(items, emitted, succ, pred, made=None):
     """OUTPUTS THAT SHARE A REGISTER CODE ARE ONE REGISTER to the edge
     builder (notes/56): `f_710004ab80` places a fixed register by
     `record[16]` alone, and every colour output is code 207 with its index
@@ -1408,6 +1434,7 @@ def _register_family_edges(items, emitted, succ, pred):
     has kind-1 edges color0 -> color3.x and color0 -> color2.w and NONE
     between `.x` and `.w`.  `G2S_COLOURWHOLE=1` chains every colour write
     whole again."""
+    pos = dict((i, k) for k, i in enumerate(emitted))
     prev = {}
     last_vout = {}              # component -> the last vertex-output write
     last_col = {}               # component -> the last colour-output write
@@ -1418,7 +1445,7 @@ def _register_family_edges(items, emitted, succ, pred):
             dm = it[1][1]
             for c in range(4):
                 if dm & (1 << c):
-                    _chain(succ, pred, last_col.get(c), i)
+                    _chain(succ, pred, last_col.get(c), i, made, pos)
                     last_col[c] = i
             continue
         if _is_colour(name):
@@ -1430,12 +1457,12 @@ def _register_family_edges(items, emitted, succ, pred):
             dm = it[1][1]
             for c in range(4):
                 if dm & (1 << c):
-                    _chain(succ, pred, last_vout.get(c), i)
+                    _chain(succ, pred, last_vout.get(c), i, made, pos)
                     last_vout[c] = i
             continue
         else:
             continue
-        _chain(succ, pred, prev.get(fam), i)
+        _chain(succ, pred, prev.get(fam), i, made, pos)
         prev[fam] = i
 
 
@@ -1470,6 +1497,7 @@ def _span_sizes_flat(lines, cuts=(), names=frozenset(), passthru=frozenset(),
 # notes/78 §3; `G2S_NOVOUT=1` turns the vertex-output family off
 _VOUT_FAMILY = not _os.environ.get("G2S_NOVOUT")
 _COLOUR_WHOLE = bool(_os.environ.get("G2S_COLOURWHOLE"))
+_FAMILYAPPEND = bool(_os.environ.get("G2S_FAMILYAPPEND"))
 _WARFLAT = bool(_os.environ.get("G2S_WARFLAT"))
 _WARLATER = bool(_os.environ.get("G2S_WARLATER"))
 

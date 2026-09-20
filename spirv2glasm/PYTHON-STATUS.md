@@ -14,7 +14,21 @@ raising* rather than by emitting something plausible — see `NotEstablished` in
 
 `tools/compare.py` emits what the Python side claims to know and compares it
 **line for line** against the oracle's listing, stopping at the first line the
-Python side does not claim:
+Python side does not claim.  Current figures (notes/113 and after):
+
+```
+probes       (627)        exact 627   prefix-only 0     DIFFERS 0  failed 0
+corpus sample (120)       exact 120   prefix-only 0     DIFFERS 0  failed 0
+slice        (1,400)      exact 962   prefix-only 438   DIFFERS 0  failed 0
+                          1,093,657 of 1,848,903 listing lines (59.2%)
+full corpus  (14,630)     being measured (PROGRESS.md has the latest run)
+```
+
+Compute shaders are converted too (they were refused by design earlier).
+Everything below this headline is the HISTORY of how the figures got here,
+kept as it was measured -- the older corpus runs are over the 10,328 modules
+an earlier `corpus/mkcorpus.py` produced (corpus/README.md), with 121 probes
+and a converter that refused compute.
 
 ```
 probes  (121 shaders)     exact 87  prefix-only 34   DIFFERS 0  failed 0
