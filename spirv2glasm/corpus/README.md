@@ -2,30 +2,31 @@
 
 `mkcorpus.py` turns the 14,706-shader GLSL corpus into SPIR-V.  Its header
 comment states every edit it makes and what forces each; the summary is that
-glslang rejects all 14,706 out of the box and this gets **10,328** through.
+glslang rejects all 14,706 out of the box and this gets **14,630** through
+(glslang 15.1.0).
 
 ```sh
 python3 corpus/mkcorpus.py /path/to/glsl /path/to/spv --jobs 4
 ```
 
 ```
-14706 shaders, 10328 compiled to SPIR-V, 4378 rejected
-   4358  cannot convert a sampler
-     16  cannot convert from ' temp float' to ' temp float16_t'
+14706 shaders, 14630 compiled to SPIR-V, 76 rejected
+     72  cannot convert a sampler
       3  extension not supported: GL_NV_bindless_texture
       1  must be a multiple of the member's alignment (layout offset
 ```
 
-**The 4,358 are one cause.**  They construct a sampler from a bindless handle —
-`texelFetch(sampler2D(uint64_t(tonemap_param_g)), ...)` — and glslang refuses to
-emit SPIR-V for that at all:
+**The samplers.**  Most of the corpus constructs a sampler from a bindless
+handle -- `texelFetch(sampler2D(uint64_t(tonemap_param_g)), ...)` -- which
+glslang refuses to emit SPIR-V for at all:
 
     'GL_ARB_bindless_texture' : not allowed when using generating SPIR-V codes
 
-That is a limit of glslang, not of `spirv2glasm`, which compiles bindless SPIR-V
-perfectly well when something else produces it; the listings show it as
-`LDC.U64 D0.x, buf14[0]` and `TEX.F R0, ..., handle(D0.x), 2D`.  Anything that
-can emit SPIR-V for `ARB_bindless_texture` would lift the corpus to ~14,700.
+`mkcorpus.py` rewrites the constructor to `sampler2D(Tex, Smpl)`, pairing the
+texture with the sampler declared at its binding (its header states what that
+costs).  The 72 left declare no sampler to pair with.  An older version of the
+script, without that edit and without the fp16 one, got 10,328 through; the
+verification in `RESULTS.md` was run on those.
 
 Then verify:
 

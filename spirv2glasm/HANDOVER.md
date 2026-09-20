@@ -200,8 +200,9 @@ default to the saved-listing form.
                                         src/fn/f_<guestaddr>.c, runtime/, build/
 /home/claude/work/proj                  the repository root: .github/ + spirv2glasm/
 /home/claude/work/proj/spirv2glasm      THIS PROJECT
-/home/claude/work/corpus_spv            10,328 real shaders as SPIR-V
-/home/claude/work/corpus_listings       517 saved oracle listings
+/home/claude/work/corpus_spv_full       the corpus as SPIR-V: 14,630 of 14,706 (corpus/README.md)
+/home/claude/work/corpus_spv            the 120-shader sample (SETUP.md §3)
+/home/claude/work/corpus_listings       the oracle's listings for the sample
 ```
 
 Guest address = ELF vaddr + 0x7100000000, which is how the port names files.

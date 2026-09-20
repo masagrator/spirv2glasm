@@ -138,7 +138,7 @@ The output files are named `<family>_<hash>[-n].<stage>.spv`. Beside them
 are `.src/`, the normalised GLSL each module was compiled from, and
 `MKCORPUS_RESULT.txt`. With glslang 15.1.0 the current mkcorpus.py gives
 14,706 shaders, 14,630 compiled and 76 rejected (72 "cannot convert a
-sampler"). corpus/README.md still shows an older run's 10,328.
+sampler").
 
 The normalised GLSL alone was also shipped separately as
 `corpus_glsl_normalised.7z` (`glsl/<name>.<stage>` plus the result file).
