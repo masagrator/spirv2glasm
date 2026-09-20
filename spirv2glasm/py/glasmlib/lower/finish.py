@@ -300,7 +300,8 @@ def _first_reader_in_block(lines, i, v, cutset):
     return None
 
 
-def _ldc_at_reader(lines, ldc_vreg, cuts, ties):
+def _ldc_at_reader(lines, ldc_vreg, cuts, ties, con_stmt=(),
+                   con_lane_load=None):
     r"""... returns {LDC line: its CREATION key} (`_creation_order`)."""
     """A static block load's node is made AT ITS FIRST READER (notes/87).
 
@@ -323,10 +324,50 @@ def _ldc_at_reader(lines, ldc_vreg, cuts, ties):
     for t in ties:
         if len([k for k in t if k < len(lines)]) > 1:
             grouped.update(t)
+    # A CONSTRUCT STATEMENT IS A GROUP WHATEVER ITS SIZE (notes/114 SS15):
+    # `post_glowhighpass-1.frag`'s `vec2(buf2[44], buf2[40])` writes one lane
+    # with a MOV and takes the other's load as lane x, so its group has a
+    # single line -- the lanes still carry the statement's `node[36]` (81),
+    # and the compiler makes the two loads after it, 83 and 85, in creation
+    # order (`tools/gsum.py`, block 7).  `G2S_NOCONSTMT=1` asks for two.
+    if not ENV.get("G2S_NOCONSTMT"):
+        for _ct, _s0 in con_stmt:
+            grouped.update(k for k in _ct if k < len(lines))
+    if ENV.get("G2S_TIEDBG"):
+        import sys as _sys
+        _n = ENV.get("G2S_TIEDBG")
+        _sys.stderr.write("CON %d statements, lane loads %s\n"
+                          % (len(con_stmt), sorted(con_lane_load or {})))
+        for _i, _l in enumerate(lines):
+            if _n in _l:
+                _sys.stderr.write("LINE %d %s\n" % (_i, _l))
+                for _t in ties:
+                    if _i in _t:
+                        _sys.stderr.write("   TIE seq=%s %s\n"
+                                          % (getattr(_t, "seq", None),
+                                             list(_t)))
     create = {}
+    _lane = dict(con_lane_load or {})
     for i, l in enumerate(lines):
         m = _ldc_line(l)
-        if m is None or m[2] not in ldc_vreg or i in tied:
+        if m is None:
+            continue
+        if i in _lane and not ENV.get("G2S_NOCONSTMT"):
+            # the load RETARGETED INTO THE CONSTRUCT'S LANE X: made after the
+            # statement like the loads its other lanes read, in creation
+            # order (the same rule as `G2S_NOLDCAFTERGROUP`'s branch)
+            _ct = _lane[i]
+            _e2 = min((eff.get(k, k) for k in _ct if k < len(lines)),
+                      default=None)
+            if _e2 is not None and i not in tied:
+                _tg = _sched.Tie()
+                _tg.seq = _e2 + 0.5 + 0.001 * i
+                _tg.append(i)
+                ties.append(_tg)
+            continue
+        if m[2] not in ldc_vreg:
+            continue
+        if i in tied:
             continue
         reader = _first_reader_in_block(lines, i, m[2], cutset)
         if reader is None:
@@ -340,15 +381,24 @@ def _ldc_at_reader(lines, ldc_vreg, cuts, ties):
         # = u_xlat6 + u_xlat7` numbers the two loads under that ADD by
         # their place in it (845, 846), not by their own lines.
         # `G2S_NOLDCCREATE=1` keeps each load's own line.
+        _rp = _sched.parse(lines[reader])
+        _k = next((x for x, (nm, _sm) in enumerate(_rp[2])
+                   if nm.strip() == m[2]), 0) if _rp else 0
         if not ENV.get("G2S_NOLDCCREATE"):
-            _rp = _sched.parse(lines[reader])
-            _k = next((x for x, (nm, _sm) in enumerate(_rp[2])
-                       if nm.strip() == m[2]), 0) if _rp else 0
             create[i] = reader - 0.5 + 0.001 * _k
         if reader == i + 1:
             continue
         tg = _sched.Tie()
+        # THE SAME ORDER IS THE NODE'S `node[36]`: two loads made under one
+        # reader are made as its operands are, so the second operand's load
+        # is stamped after the first's and the selector keeps them that way.
+        # `map_87cc6750.frag`'s `OR.S D3.x, D3, D4` of two handle halves
+        # prints `buf14[344]` (its `D3`) before `buf14[1368]`, though pass 1
+        # lists them the other way round.  `G2S_NOLDCOPSEQ=1` gives both the
+        # reader's own key, as before.
         tg.seq = reader - 0.5
+        if not ENV.get("G2S_NOLDCOPSEQ"):
+            tg.seq = reader - 0.5 + 0.001 * _k
         _e = eff.get(reader, reader)
         if reader in grouped and not ENV.get("G2S_NOLDCAFTERGROUP"):
             # ... but a reader STAMPED EARLIER -- a construct's lane, whose
@@ -691,7 +741,8 @@ def _pass1_alloc_pass2(lines, cuts, ties, passthru, span_sizes, band,
     ra = _ifg.allocate(lines1, items1, spans, band,
                        _creation_order(lines, flushed, ldc_create),
                        frozenset(carriers) if walks else None,
-                       outputs=outputs)
+                       outputs=outputs,
+                       order=(None if ENV.get("G2S_NOMCMADE") else perm1))
     if ra is None:
         return None
     assign, regs = ra
@@ -705,7 +756,7 @@ def _pass1_alloc_pass2(lines, cuts, ties, passthru, span_sizes, band,
         return None
     if ENV.get("G2S_VLINES"):
         _dump_vlines(lines, lines1, items1, spans, band, flushed, carriers,
-                     assign, perm, ldc_create)
+                     assign, perm, ldc_create, perm1)
     return [alloc[i] for i in perm], regs, dregs
 
 
@@ -720,7 +771,7 @@ def _colour_long(lines, spans):
 
 
 def _dump_vlines(lines, lines1, items1, spans, band, flushed, carriers,
-                 assign, perm, ldc_create=None):
+                 assign, perm, ldc_create=None, perm1=None):
     """Diagnosis only: the final order with each line's placeholders and
     record indices, to join against `tools/nodedump.py`'s `vr=`."""
     _idx = _ifg.order_records(
@@ -729,7 +780,8 @@ def _dump_vlines(lines, lines1, items1, spans, band, flushed, carriers,
         _ifg.walk_keys(lines1, items1, spans, frozenset(carriers))
         if ENV.get("G2S_WALKS") else None,
         None if ENV.get("G2S_NOMERGEFIRST")
-        else _ifg.merge_chains(items1, spans, band))
+        else _ifg.merge_chains(items1, spans, band,
+                               None if ENV.get("G2S_NOMCMADE") else perm1))
     sys.stderr.write("REGS %s\n" % sorted(
         (_idx[v], v, assign[v]) for v in assign))
     for i in perm:
@@ -755,7 +807,9 @@ class Finish(object):
             self._drop_lines(_dead)
         if not ENV.get("G2S_NOLDCSEQ"):
             self.ldc_create = _ldc_at_reader(self.lines, self.ldc_vreg,
-                                             self.cuts, self.ties)
+                                             self.cuts, self.ties,
+                                             self.con_stmt,
+                                             self.con_lane_load)
         if self.callees:
             self._label_subroutines()
         self.lines = _number_conditions(self.lines)

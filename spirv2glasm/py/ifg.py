@@ -591,7 +591,7 @@ def walk_keys(lines, items, spans, carriers=frozenset()):
     return out
 
 
-def merge_chains(items, spans, band):
+def merge_chains(items, spans, band, order=None):
     """THE MERGE CHAINS each block's first numbering walk takes (notes/107):
     `{vreg: (block, key)}` for every lowering temp written by two or more
     lines with disjoint partial masks -- a construct written lane by lane,
@@ -609,7 +609,14 @@ def merge_chains(items, spans, band):
             for nm, _sm in srcs:
                 m = _place(nm or "")
                 if m is not None:
-                    last[m] = p
+                    # THE READER'S OWN POSITION -- where the line was MADE,
+                    # not where pass 1 lists it (`order` maps one to the
+                    # other).  `monster_021750f2.vert` has two merges in one
+                    # block, `#366` read last at its line 472 and `#388` at
+                    # 499, and the compiler numbers `#388` first; pass 1
+                    # lists the two readers the other way round, which
+                    # numbered them the wrong way.
+                    last[m] = p if order is None else order[p]
             v = _place(dst or "")
             if v is not None and v not in band:
                 defs.setdefault(v, []).append(dm)
@@ -623,6 +630,11 @@ def merge_chains(items, spans, band):
             acc |= m
         if len(masks) >= 2 and disjoint:
             out[v] = (blk[v], -last.get(v, 0))
+    if os.environ.get("G2S_MCDBG"):                       # diagnosis only
+        import sys as _sys
+        for v in sorted(out, key=lambda x: out[x]):
+            _sys.stderr.write("MC #%d block %d last %d\n"
+                              % (v, out[v][0], -out[v][1]))
     return out, blk
 
 
@@ -958,7 +970,7 @@ def _sched_parse(line):
 
 
 def allocate(lines, items, spans, band, order_key=None, carriers=None,
-             outputs=None):
+             outputs=None, order=None):
     """Colour the converter's lines with the compiler's allocator.
 
     Returns `{placeholder: register}` and the register count, or None when
@@ -976,7 +988,7 @@ def allocate(lines, items, spans, band, order_key=None, carriers=None,
              if carriers is not None else None)
     index = order_records(vregs, band, order_key, walks,
                           None if os.environ.get("G2S_NOMERGEFIRST")
-                          else merge_chains(items, spans, band))
+                          else merge_chains(items, spans, band, order))
     graph, c56, c60, pressure = build(pos, spans, band, index,
                                       if_successors(lines, spans),
                                       _output_defs(items, outputs),

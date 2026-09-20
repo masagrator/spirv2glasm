@@ -375,6 +375,8 @@ class Core(object):
         block."""
         self.cuts = []                  # lines that OPEN a block (sched.py)
         self.ties = []                  # line groups sharing one `node[36]`
+        self.con_stmt = []              # (a construct statement's group, s0)
+        self.con_lane_load = {}         # a lane-x load's line -> that group
         self.passthru = []              # a local store's pass-through half
         self.calls = []                 # writes that are not statements
         self.vsplit = 0                 # blocks opened by a second store
@@ -1110,8 +1112,24 @@ class Core(object):
                   and 0 not in force
                   and not ENV.get("G2S_NODE0SEQ"))
         if not ENV.get("G2S_CONSTRUCTTIE"):
-            self._construct_seqs(_s0, _tie, _gathers, flat,
-                                 run=_run >= 2 or _lane0_is_load or _node0)
+            _ct = self._construct_seqs(
+                _s0, _tie, _gathers, flat,
+                run=_run >= 2 or _lane0_is_load or _node0)
+            # THE STATEMENT'S OWN GROUP, for the loads its operands lower to
+            # (notes/114 SS6, finish.py `_ldc_at_reader`): its lanes carry
+            # this `node[36]`, and a load read by one of them is made after
+            # it -- whether the statement writes four lanes or one.  The
+            # lane-x load retargeted into the construct's register
+            # (`_load_is_lane_x`) is one of those loads, not a lane.
+            if _ct is not None:
+                self.con_stmt.append((_ct, _s0))
+                if _lane0_is_load:
+                    # `ldc_at` is {value: (its line, its vreg)}; lane x is
+                    # named by the VREG here
+                    _ll = next((_n for _n, _d in self.ldc_at.values()
+                                if _d == flat[0][0]), None)
+                    if _ll is not None:
+                        self.con_lane_load[_ll] = _ct
         else:
             self.ties.append(_tie)
         self.con_src[_dst] = (_csrc, self._bkey())
@@ -1157,6 +1175,7 @@ class Core(object):
         return _k if _k >= 2 else 0
 
     def _construct_seqs(self, s0, writes, gathers, flat, run=False):
+        """Returns the statement's own group (`_rest`)."""
         """A CONSTRUCT'S `node[36]`s (`tools/nodedump.py` on `sa_a`..`sa_d`
         and `sa_b.frag`'s `txVec0 = vec4(u_xlat0.xy, 2.0, u_xlat0.z)`): the
         writes of components 1.. are made first, together; then the write of
@@ -1184,6 +1203,7 @@ class Core(object):
             _tg = _sched.Tie([_g])
             _tg.seq = s0 + 0.2 + 0.01 * _k
             self.ties.append(_tg)
+        return _rest
 
     def _facing_cc(self):
         """`facing > 0` as a branch's condition (notes/88): the int input's

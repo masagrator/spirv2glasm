@@ -30,6 +30,11 @@ def _float_literal(bits):
     """
     v = struct.unpack("<f", struct.pack("<I", bits & 0xffffffff))[0]
     if v == int(v) and abs(v) < 1e16:
+        # NEGATIVE ZERO KEEPS ITS SIGN, as `%g` prints it: the whole-number
+        # path goes through an integer, which drops it.
+        # `minimap_29ccc3e6.frag` stores `{-0, 0, 0, 0}`.
+        if v == 0 and bits & _UINT_SIGN_BIT:
+            return "-0"
         return "%d" % int(v)
     t = repr(float("%.9g" % v))
     return t[:-2] if t.endswith(".0") else t

@@ -355,9 +355,13 @@ STB chains; `notes/pending_probes/` is empty.  The probes ship as ONE
 archive, `probes.7z` (probes/ and listings/); nothing from the corpus is in
 the package, see SETUP.md.)
 
-(notes/114: the full-corpus sweep -- six causes, including the condition
-records' place in the R live array and the load record numbering at its
-reader; `tools/recnum.py` compares the numbering itself.)
+(notes/114: the full-corpus sweep -- eight causes, including the condition
+records' place in the R live array, the load record numbering at its reader,
+and the component an anti-dependence is made for: the one its writer is the
+LAST to write, so a covered write is made after the writers that keep one.
+`tools/recnum.py` compares the numbering itself, `tools/waredge.py` scores a
+candidate anti-dependence order against every reader in a trace -- use them
+rather than narrowing a rule until a listing matches.)
 
 (notes/113: a trailing `ENDREP`/`ENDIF` -- inside the last block, with
 the RET -- now gets its dataflow edges, `ifg._trailing_structure`; a lane

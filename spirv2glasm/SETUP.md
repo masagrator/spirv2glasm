@@ -244,6 +244,11 @@ kept:
 | `tools/samecheck.py save\|check <out> <spv-dirs>` | the converter against a saved copy of its own output (refactors that must not change a byte) |
 | `tools/lexfuzz.py [N]` | every regex-free scanner in the compiler against the pattern it replaced (notes/112) |
 | `tools/recnum.py x.spv x.simp` | the compiler's record NUMBERING against ours, paired by (first def, last use, mask) -- for when the numbering itself differs (notes/114) |
+| `tools/waredge.py [-same] [-v] x.spv...` | candidate ANTI-DEPENDENCE orders scored against every reader in the trace, so the key is read rather than fitted (notes/114 §8) |
+| `tools/p2check.py [-v] x.spv...` | OUR pass 2 on the COMPILER's blocks (its stamps, its edges) against the order it printed -- splits a scheduler bug from a lowering or allocation one (notes/114) |
+| `G2S_TIEDBG=<text> spirv2glasm.py x.spv` | the line groups (`ties`) a line belongs to, and the construct statements |
+| `G2S_TEMPDBG=#n\|* spirv2glasm.py x.spv` | why a stored value is (not) a statement temp with a flush |
+| `G2S_ORACLETIMEOUT=<s>` | how long the trace tools wait for the oracle (a big corpus shader takes minutes) |
 
 Every rule in `py/` has an environment switch that turns it off
 (`G2S_NO...`). The notes name each one. Switching a rule off and re-running a

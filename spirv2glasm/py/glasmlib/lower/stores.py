@@ -969,6 +969,16 @@ class StoreOps(object):
         store -- `u_xlat18 = (b) ? -1.0 : 1.0` prints the one `MOV.F R0.x,
         R0;` after the ENDIF, `mb_n24`."""
         _vx = self.module.result_insn.get(val)
+        if ENV.get("G2S_TEMPDBG") in (v, "*"):             # diagnosis only
+            import sys as _sys
+            _sys.stderr.write(
+                "TEMPSTORE %s val=%s op=%s load_of=%s fwd_of=%s name=%s "
+                "merged=%s arm=%s comp_load=%s comp_value=%s splat=%s\n"
+                % (v, val, _vx.opcode if _vx else None,
+                   val in self.load_of, val in self.fwd_of,
+                   v in self.local_reg.values(), v in self.merged,
+                   val in self.arm_names, val in self.comp_load,
+                   val in self.component_values, val in self.splat_nodes))
         return (v.startswith("#")
                 and not (val in self.load_of and v == self.load_of[val][1])
                 and not (val in self.fwd_of and not ENV.get("G2S_FWDFLUSH"))
@@ -1695,6 +1705,14 @@ class StoreOps(object):
         if _stemp:
             return ["MOV.F result.position.%s, %s.x;"
                     % (_COMPONENTS[comp], src)]
+        if src.startswith("{") and val not in self.comps \
+                and not ENV.get("G2S_POSCONSCRATCH"):
+            # A SCALAR CONSTANT goes straight to the lane here too, as it
+            # does into any other output (`sc_cstore.frag`, above): no
+            # scratch, its slot-0 selector printed.  `post_popup_face_v.vert`
+            # prints `MOV.F result.position.z, {0, 0, 0, 0}.x;`.
+            return ["MOV.F result.position.%s, %s.x;"
+                    % (_COMPONENTS[comp], src)]
         scratch = self._scratch_for(src)
         return ["MOV.F %s.x, %s;" % (scratch, sc),
                 "MOV.F result.position.%s, %s.x;"
@@ -1824,7 +1842,18 @@ class StoreOps(object):
         value's own instruction wrote, as for the position lanes, notes/74
         §3 -- `mb_n30.vert`'s `MOV.F result.attrib[4].w, R12.x;`)"""
         _vi = self.module.result_insn.get(val)
-        return (_is_placeholder(src)
+        # A SCALAR INTERFACE OPERAND IS A WHOLE SCALAR VALUE TOO: the rule is
+        # about the value, not about where it lives, so a `float` input goes
+        # straight to the lane like a register does -- `post_popup_face_v`'s
+        # `in_TEXCOORD0` (an `OpTypeFloat` Input) prints `MOV.F
+        # result.attrib[1].z, vertex.attrib[1].x;`, while a COMPONENT of a
+        # vector input still gathers through the scratch (`st3_dstswz.vert`,
+        # whose `a0.xy` is a `vec4`'s).  `G2S_NOSCALARIFACE=1` keeps the
+        # register-only test.
+        _iface = (not _is_placeholder(src) and not src.startswith("{")
+                  and _lex.swizzle_suffix(src, 1, 4) is None
+                  and not ENV.get("G2S_NOSCALARIFACE"))
+        return ((_is_placeholder(src) or _iface)
                 and set(self.comps.get(val, (0,))) == {0}
                 and _vi_is_scalar(self.module, val)
                 and _vi is not None
@@ -2066,5 +2095,15 @@ class StoreOps(object):
             self.stmtpos[_sb] = self.defline[val]
             self.flush_q.append((_sb, _mov, _ds, None, self.defline[val]))
             self._flush(only=_sb)
+        elif (_is_selected_placeholder(src)
+              and not ENV.get("G2S_SELSELFMOVE")):
+            # A VALUE READ THROUGH A SELECTOR HAS NO SELF-MOVE: there is no
+            # temp to rename, the value IS the name read that way (the same
+            # reading as `_store_opening_block`'s `_selected`), and a
+            # destination cannot carry a selector anyway -- `ui_basic_v.vert`
+            # stored `#122.yzww` to `result.attrib[3].xyz` and we wrote
+            # `MOV.F #122.yzww.xyz, #122.yzww;`, which the compiler does not
+            # print at all.  `G2S_SELSELFMOVE=1` restores it.
+            pass
         else:
             self.lines.append("%s %s%s, %s;" % (_mov, src, _ds, src))

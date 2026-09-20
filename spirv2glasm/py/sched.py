@@ -564,6 +564,7 @@ class _EdgeBuilder(object):
         self.made = {}              # (a, b) -> when the sweep made it
         self.defs = {}              # name -> [(mask, index)...] live defs
         self.reads = {}             # name -> [(mask, index)...] since that def
+        self.war = {}               # (reader, name) -> [(writer, mask)...]
 
     def add(self, a, b, when):
         """PUSHED AT THE HEAD.  `f_710004ab80` builds `entry[56]` by pushing,
@@ -613,6 +614,7 @@ class _EdgeBuilder(object):
         for mask, j in self.reads.get(dst, ()):
             if mask & dmask:
                 self.add(j, i, self._war_key(i, j, dst, dmask, mask))
+                self.war.setdefault((j, dst), []).append((i, dmask))
 
     def _war_key(self, i, j, dst, dmask, rmask=0xF):
         """ONE READER'S anti-dependences are made over its SOURCES LAST
@@ -654,9 +656,47 @@ class _EdgeBuilder(object):
                            if m & ~dmask]
 
     def finish(self):
+        self._war_components()
         for a in range(self.n):
             self.succ[a].sort(key=lambda b: self.made[(a, b)])
         return self.succ, self.npred
+
+    def _war_components(self):
+        """THE COMPONENT AN ANTI-DEPENDENCE IS MADE FOR IS THE ONE THIS WRITER
+        IS THE LAST TO WRITE, and a writer that is the last of none is made
+        LAST (`tools/waredge.py`).
+
+        One reader's anti-dependences over one source are made component by
+        component, and the writer a component belongs to is the LAST one to
+        write it -- so a write that a later write covers again is not made for
+        that component at all, and drops behind the writers that keep one.
+        `map_77e7d345.frag`'s TRUNC reads `R2` whole: the writers are the
+        LDC of `R2.x`, the `.w` and `.z` lanes and the `.xy` lane that writes
+        `x` again, and the compiler's list (`tools/gsum.py`, node 18.5) is the
+        LDC, `.w`, `.z`, `.xy` -- made `.xy` (which keeps `x` and `y`), `.z`,
+        `.w`, and the LDC last, though the LDC's own component is the lowest
+        of the four.  `probes/wk_d.frag` and `probes/rc_g.frag`, where no
+        writer covers another, are the component order as before.
+        `G2S_NOWAROWN=1` keeps each writer's own lowest component.
+        """
+        if _WARFLAT or _WARLATER or _NOWAROWN:
+            return
+        for (j, _name), group in self.war.items():
+            if len(group) < 2:
+                continue
+            owner = {}
+            for i, dmask in group:
+                for c in range(4):
+                    if dmask >> c & 1:
+                        owner[c] = i          # the LAST writer of c keeps it
+            high = {}
+            for c, i in owner.items():
+                high[i] = max(high.get(i, 0), c)
+            for i, _dmask in group:
+                key = self.made.get((j, i))
+                if key is None or len(key) != 5:
+                    continue
+                self.made[(j, i)] = key[:3] + (high.get(i, 4),) + key[4:]
 
 
 def order(lines, roots=()):
@@ -1500,6 +1540,7 @@ _COLOUR_WHOLE = bool(_os.environ.get("G2S_COLOURWHOLE"))
 _FAMILYAPPEND = bool(_os.environ.get("G2S_FAMILYAPPEND"))
 _WARFLAT = bool(_os.environ.get("G2S_WARFLAT"))
 _WARLATER = bool(_os.environ.get("G2S_WARLATER"))
+_NOWAROWN = bool(_os.environ.get("G2S_NOWAROWN"))
 
 
 # CONTROL FLOW (notes/64).  A line that sets or tests a condition code, and
