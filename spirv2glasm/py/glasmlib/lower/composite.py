@@ -423,6 +423,21 @@ class CompositeOps(object):
             self.values[ins.result] = _ls[sel[0]][0]
             self.comps[ins.result] = tuple(_ls[x][1] for x in sel)
             return True
+        _ml = self.merge_lanes.get(base)
+        _lw0 = self.load_of.get(a)
+        if (_ml is not None and a not in self.comps and _lw0 is not None
+                and _lw0[1] == _ml[0]
+                and not any((_ml[1] >> x) & 1 for x in sel)
+                and not ENV.get("G2S_NOMERGESHUFNAME")):
+            # A SWIZZLE OF ONLY LANES THE MERGE'S PAIR PASSED THROUGH keeps
+            # the NAME, as the reads made before the merge do (core.py
+            # `_merge_forward`, `G2S_NOMERGESWZ`) -- a later load of the
+            # local is forwarded the merge, but the lanes it selects are the
+            # name's: `map_05681686`'s `u_xlat7.ww * ..`, after `u_xlat7.xyz
+            # = ..` (the pair wrote `.z`) and `u_xlat7.wwww * ..`, prints
+            # `MUL.F32 R27.xy, R17.w, R17;` -- R17 the name, R8 the merge.
+            # `G2S_NOMERGESHUFNAME=1` reads the merge.
+            base = _ml[0]
         prev = self.comps.get(a, _IDENTITY)
         _lwa = self.load_of.get(a)
         if (_lwa is not None and base == _lwa[1] and a not in self.comps

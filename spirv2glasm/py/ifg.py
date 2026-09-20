@@ -331,7 +331,48 @@ def _output_defs(items, outputs):
     return out
 
 
-def build(pos, spans, band, index, succ=None, odefs=None):
+def _cond_members(items, spans):
+    """THE CONDITION RECORDS ARE MEMBERS OF THE R CLASS'S LIVE ARRAY too
+    (`g2s_trace_liveset`, x5=3): `map_2810dda5`'s `MOV.U.CC` before an `IF`
+    is record 905, class 1, and the R sweep's array holds it -- appended
+    right after the block's sorted seed (the `IF` tests it at the block's
+    end marker) and swap-removed where it is set.  It makes no R edge (no R
+    record lists it) and takes no register of the class, like an output.
+
+    `(per line [(key, mask)] set, per line the uses IN SOURCE ORDER as
+    `(is condition, name, mask)`, per block [(key, mask)] the structure word
+    after it reads)`; condition keys are negative.  A predicated write reads
+    its condition BEFORE its own destination (`sched.parse`), and the array
+    takes them in that order.  None with `G2S_NOCCLIVE=1` or no condition
+    records."""
+    if os.environ.get("G2S_NOCCLIVE"):
+        return None
+    cpos, _cm = _cond_positions(items)
+    if not any(d or u for d, u in cpos):
+        return None
+    key = lambda k: -2000000.0 - k                       # noqa: E731
+    cdefs = [[(key(k), m) for k, m in d] for d, _u in cpos]
+    uorder = []
+    for it in items:
+        row = []
+        for nm, m in (it[2] if it is not None else ()):
+            nm = (nm or "").strip()
+            c = _cond_vreg(nm)
+            if c is not None:
+                row.append((True, key(c), m))
+            elif _place(nm) is not None:
+                row.append((False, _place(nm), m))
+        uorder.append(row)
+    carry = []
+    for b in range(len(spans)):
+        nxt = spans[b + 1] if b + 1 < len(spans) else None
+        _cu = [(k, m) for isc, k, m in uorder[nxt[0]] if isc] if (
+            nxt is not None and len(nxt) == 1) else []
+        carry.append(_cu)
+    return cdefs, uorder, carry
+
+
+def build(pos, spans, band, index, succ=None, odefs=None, cmembers=None):
     """Every record's neighbour list, as `f_7100043460` leaves `record[216]`.
 
     `index` maps a placeholder to its record index.  Returns
@@ -339,7 +380,8 @@ def build(pos, spans, band, index, succ=None, odefs=None):
     pressure)`.
     """
     ann = annotation(pos, spans, band, succ)
-    raw, c56, c60, pressure = _sweep(pos, spans, ann, index, odefs)
+    raw, c56, c60, pressure = _sweep(pos, spans, ann, index, odefs,
+                                     cmembers)
     _merge_duplicates(raw)
     _mirror(raw)
     graph = {}
@@ -370,7 +412,7 @@ def _interference_word(om, xm):
 _LIVEDBG = bool(os.environ.get("G2S_LIVEDBG"))
 
 
-def _sweep(pos, spans, ann, index, odefs=None):
+def _sweep(pos, spans, ann, index, odefs=None, cmembers=None):
     """The backward sweep of `f_7100043460` over every block, each seeded
     with its annotation: `({owner: [(other, word)]} pushed at the head,
     first-def positions, last-use positions, pressure)`.
@@ -412,10 +454,20 @@ def _sweep(pos, spans, ann, index, odefs=None):
             live.update(oseed[b])
             arr = sorted(live)
             at = dict((r, i) for i, r in enumerate(arr))
+            if cmembers is not None:
+                # the structure word ending the block reads its condition
+                # record at the block's end (`_cond_members`)
+                for _k, _m in cmembers[2][b]:
+                    live[_k] = live.get(_k, 0) | _m
+                    if _k not in at:
+                        at[_k] = len(arr)
+                        arr.append(_k)
         defs, uses = pos[p]
         pressure = max(pressure, _live_count(live))
         dl = [(index[v], dm) for v, dm in defs]
-        ol = odefs[p] if odefs else []
+        ol = list(odefs[p]) if odefs else []
+        if cmembers is not None:
+            ol += cmembers[0][p]
         # f_71000432c0: every def's edges against the live array, then the
         # kills (0x438d0), as `_def_edges` / `_kill`
         for d, dm in dl:
@@ -457,8 +509,17 @@ def _sweep(pos, spans, ann, index, odefs=None):
             if u not in c60:
                 c60[u] = k
         if not old_walk:
-            for v, _um in uses:
-                u = index[v]
+            # IN SOURCE ORDER, the condition records among them
+            # (`_cond_members`)
+            _app = ([(index[v], None) for v, _um in uses]
+                    if cmembers is None else
+                    [((k if isc else index.get(k)), (m if isc else None))
+                     for isc, k, m in cmembers[1][p]])
+            for u, _m in _app:
+                if u is None:
+                    continue
+                if _m is not None:
+                    live[u] = live.get(u, 0) | _m
                 if u not in at:
                     at[u] = len(arr)
                     arr.append(u)
@@ -918,7 +979,8 @@ def allocate(lines, items, spans, band, order_key=None, carriers=None,
                           else merge_chains(items, spans, band))
     graph, c56, c60, pressure = build(pos, spans, band, index,
                                       if_successors(lines, spans),
-                                      _output_defs(items, outputs))
+                                      _output_defs(items, outputs),
+                                      _cond_members(items, spans))
     recs = _records(index, pos)
 
     def graph_fn(rs):

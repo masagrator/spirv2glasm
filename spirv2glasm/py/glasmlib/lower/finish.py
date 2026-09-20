@@ -301,6 +301,7 @@ def _first_reader_in_block(lines, i, v, cutset):
 
 
 def _ldc_at_reader(lines, ldc_vreg, cuts, ties):
+    r"""... returns {LDC line: its CREATION key} (`_creation_order`)."""
     """A static block load's node is made AT ITS FIRST READER (notes/87).
 
     The reader substitutes a load into the statement that uses it (notes/67
@@ -315,17 +316,52 @@ def _ldc_at_reader(lines, ldc_vreg, cuts, ties):
     for t in ties:
         tied.update(t)
     cutset = sorted(cuts)
+    # each line's `node[36]` as the ties make it (sched.py `_seq_keys`)
+    _sk = _sched._seq_keys(len(lines), ties)
+    eff = dict((k, _sk[k]) for k in range(len(lines)))
+    grouped = set()
+    for t in ties:
+        if len([k for k in t if k < len(lines)]) > 1:
+            grouped.update(t)
+    create = {}
     for i, l in enumerate(lines):
         m = _ldc_line(l)
         if m is None or m[2] not in ldc_vreg or i in tied:
             continue
         reader = _first_reader_in_block(lines, i, m[2], cutset)
-        if reader is None or reader == i + 1:
+        if reader is None:
+            continue
+        # THE NODE IS CREATED AT ITS READER (notes/87), and the RECORD
+        # numbering meets it there (notes/107), IN THE READER'S OPERAND
+        # ORDER: the loads a statement reads are made as its operands are.
+        # `map_2810dda5`'s `vec4(p0, p0, p1, p1)` numbers the p0 load, the
+        # lane's scratch copy of it, then the p1 load (vr 771, 772, 773;
+        # `G2S_ONLY=simp`) though both OpLoads come first, and its `u_xlat5
+        # = u_xlat6 + u_xlat7` numbers the two loads under that ADD by
+        # their place in it (845, 846), not by their own lines.
+        # `G2S_NOLDCCREATE=1` keeps each load's own line.
+        if not ENV.get("G2S_NOLDCCREATE"):
+            _rp = _sched.parse(lines[reader])
+            _k = next((x for x, (nm, _sm) in enumerate(_rp[2])
+                       if nm.strip() == m[2]), 0) if _rp else 0
+            create[i] = reader - 0.5 + 0.001 * _k
+        if reader == i + 1:
             continue
         tg = _sched.Tie()
         tg.seq = reader - 0.5
+        _e = eff.get(reader, reader)
+        if reader in grouped and not ENV.get("G2S_NOLDCAFTERGROUP"):
+            # ... but a reader STAMPED EARLIER -- a construct's lane, whose
+            # group carries the statement's `node[36]` -- was stamped before
+            # its operands' loads were made: `map_2810dda5`'s `vec4(p0, p0,
+            # p1, p1)` of two uniforms has its lane MOVs at seq 164 and the
+            # LDCs at 166 and 168 (`tools/gsum.py`, block 20), the MUL
+            # reading it at 169.  The load goes just after the group's seq,
+            # in creation order.
+            tg.seq = _e + 0.5 + 0.001 * i
         tg.append(i)
         ties.append(tg)
+    return create
 
 
 def _mask_bits(swizzle):
@@ -403,7 +439,7 @@ def _flush_order(flushed):
     return out
 
 
-def _creation_order(lines, flushed):
+def _creation_order(lines, flushed, ldc_create=None):
     """The record-order key of every placeholder (notes/107): the line, in
     CREATION order, that first writes it -- else the first that names it.
 
@@ -422,7 +458,8 @@ def _creation_order(lines, flushed):
         if it is not None:
             _dn = (it[1][0] or "").strip()
             if _lex.is_numbered(_dn, "#"):
-                first_def.setdefault(int(_dn[1:]), i)
+                first_def.setdefault(int(_dn[1:]),
+                                     (ldc_create or {}).get(i, i))
         for _d in _placeholder_numbers(line):
             first_seen.setdefault(int(_d), i)
     out = dict(first_seen)
@@ -626,7 +663,8 @@ def _pointee_array_length(module, vid):
 
 def _pass1_alloc_pass2(lines, cuts, ties, passthru, span_sizes, band,
                        names=frozenset(), calls=(), flushed=None,
-                       vkey=None, carriers=frozenset(), outputs=None):
+                       vkey=None, carriers=frozenset(), outputs=None,
+                       ldc_create=None):
     """The compiler's own sequence (notes/57): PASS 1 schedules each block,
     the allocator colours sweeping pass 1's lists, and PASS 2 builds its
     edges on the ALLOCATED registers and prints.  Returns (rendered, regs)
@@ -651,7 +689,7 @@ def _pass1_alloc_pass2(lines, cuts, ties, passthru, span_sizes, band,
         return None
     walks = ENV.get("G2S_WALKS")
     ra = _ifg.allocate(lines1, items1, spans, band,
-                       _creation_order(lines, flushed),
+                       _creation_order(lines, flushed, ldc_create),
                        frozenset(carriers) if walks else None,
                        outputs=outputs)
     if ra is None:
@@ -667,7 +705,7 @@ def _pass1_alloc_pass2(lines, cuts, ties, passthru, span_sizes, band,
         return None
     if ENV.get("G2S_VLINES"):
         _dump_vlines(lines, lines1, items1, spans, band, flushed, carriers,
-                     assign, perm)
+                     assign, perm, ldc_create)
     return [alloc[i] for i in perm], regs, dregs
 
 
@@ -682,12 +720,12 @@ def _colour_long(lines, spans):
 
 
 def _dump_vlines(lines, lines1, items1, spans, band, flushed, carriers,
-                 assign, perm):
+                 assign, perm, ldc_create=None):
     """Diagnosis only: the final order with each line's placeholders and
     record indices, to join against `tools/nodedump.py`'s `vr=`."""
     _idx = _ifg.order_records(
         set(int(m) for l in lines for m in _placeholder_numbers(l)),
-        band, _creation_order(lines, flushed),
+        band, _creation_order(lines, flushed, ldc_create),
         _ifg.walk_keys(lines1, items1, spans, frozenset(carriers))
         if ENV.get("G2S_WALKS") else None,
         None if ENV.get("G2S_NOMERGEFIRST")
@@ -716,7 +754,8 @@ class Finish(object):
         if _dead and not ENV.get("G2S_KEEPDEADLDC"):
             self._drop_lines(_dead)
         if not ENV.get("G2S_NOLDCSEQ"):
-            _ldc_at_reader(self.lines, self.ldc_vreg, self.cuts, self.ties)
+            self.ldc_create = _ldc_at_reader(self.lines, self.ldc_vreg,
+                                             self.cuts, self.ties)
         if self.callees:
             self._label_subroutines()
         self.lines = _number_conditions(self.lines)
@@ -851,7 +890,8 @@ class Finish(object):
                 self.band, self.names, self.calls, self.flushed,
                 _vkeys(self.lines, self.stmtpos), self.carriers,
                 None if ENV.get("G2S_NOOUTREC")
-                else _output_records(self.module, self.model))
+                else _output_records(self.module, self.model),
+                getattr(self, "ldc_create", None))
             if done is not None:
                 return done
         lines = self._schedule_both_passes()
@@ -909,7 +949,9 @@ class Finish(object):
             _items = [_sched.parse(l) for l in lines]
             _ra = _ifg.allocate(lines, _items,
                                 _spans_of(span_sizes, len(lines)), self.band,
-                                _creation_order(self.lines, self.flushed))
+                                _creation_order(self.lines, self.flushed,
+                                                getattr(self, "ldc_create",
+                                                        None)))
         if _ra is None and self.local_reg:
             raise NotEstablished(
                 "a whole load of a local assembled from parts, in a body the "

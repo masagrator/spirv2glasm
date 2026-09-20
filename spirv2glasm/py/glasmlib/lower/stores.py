@@ -790,8 +790,14 @@ class StoreOps(object):
                 "a local store opening a block whose value was made in an "
                 "earlier one")
         else:
-            self._store_in_block(val, v, _reg, _mv, _ds, _here,
-                                 merge_reader=_mfw is not None)
+            if (self._store_in_block(val, v, _reg, _mv, _ds, _here,
+                                     merge_reader=_mfw is not None)
+                    and not ENV.get("G2S_NORETARGETFWD")):
+                # the load's node now writes the local: a read in the block
+                # takes the register (the old value is gone) --
+                # `lens_flare_v.vert`'s `u_xlatu1 = buf.v; .. float(u_xlatu1)`
+                # prints `LDB.U32 R0.x, sbo_buf1[0]; .. I2F.U R2.x, R0;`
+                v = _reg
         if _mfw is not None:
             # the reader is the merge's statement's
             self.merge_grp[_mfw].append(len(self.lines) - 1)
@@ -897,8 +903,8 @@ class StoreOps(object):
             # the load's node writes the local (core.py `_retarget_node`):
             # `mx_g.vert`'s `u_xlat0 = m[2]` is `MOV.F R0, R0;`, `mx_h`'s
             # `u_xlat0 = m2` `LDC.F32X4 R0, buf0[32];` -- no store of its own
-            # and no temp to flush
-            return
+            # and no temp to flush.  True: the caller forwards the register.
+            return True
         self.lines.append(_emit(_mv, _reg + _ds, v))
         if merge_reader and not ENV.get("G2S_MERGEREADERGRP"):
             return
@@ -1936,6 +1942,19 @@ class StoreOps(object):
             # `mx_g.vert`'s `o = m[1]` is `MOV.F result.attrib[0], R1;`,
             # `mx_h`'s `o = m1` `LDC.F32X4 result.attrib[0], buf0[16];`
             return
+        _crd = (self._con_read(val)
+                if (not _wsec and const is None and _n == 1
+                    and not ENV.get("G2S_NOWHOLECONREAD")) else None)
+        if _crd is not None:
+            # A SCALAR LANE OF A CONSTRUCT MADE IN THIS BLOCK reads that
+            # lane's source, bare, as the lane-x output store does
+            # (`chr_hair_2ae6bf65`, `_store_output_lane`): the slice's
+            # `debug_lightprobe_v`'s `vs_TEXCOORD1 = u_xlat0.y` right after
+            # `u_xlat0.xy = vec2(a, b)` prints `MOV.F result.attrib[2].x,
+            # R4;` -- R4 what `b`'s MOV wrote (`tools/gsum.py`: node 25.11
+            # reads 25.7), not the construct's `.y`.
+            # `G2S_NOWHOLECONREAD=1` reads the construct's lane.
+            src, _sw = _crd.split(".")[0], None
         if _sw is not None and not src.startswith("{"):
             src += _swizzle_suffix(_sw, _n)
         self._tie_output_to_read(val)

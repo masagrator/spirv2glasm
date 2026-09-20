@@ -355,6 +355,10 @@ STB chains; `notes/pending_probes/` is empty.  The probes ship as ONE
 archive, `probes.7z` (probes/ and listings/); nothing from the corpus is in
 the package, see SETUP.md.)
 
+(notes/114: the full-corpus sweep -- six causes, including the condition
+records' place in the R live array and the load record numbering at its
+reader; `tools/recnum.py` compares the numbering itself.)
+
 (notes/113: a trailing `ENDREP`/`ENDIF` -- inside the last block, with
 the RET -- now gets its dataflow edges, `ifg._trailing_structure`; a lane
 of a splat of a scalar local's load goes straight in.  The full corpus's
