@@ -1,0 +1,415 @@
+{
+ "note": "lowermap.py -- read the cgc-EXPRESSION-operator -> IR-operation-family map.\n\n`f_7100f41f8c` is the lowering: it takes one cgc expression, reads its operator\nfrom byte 0, range-checks it against 0x48 and dispatches through a halfword\njump table in .rodata at 0x11c0ebc anchored at 0xf42004.  Each arm lowers the\noperands (by recursing) and then calls one of the IR-node factories --\n`f_7100fab880` and its siblings -- with the FAMILY BASE in W1.  notes/34 shows\nthe factory writing that W1 into `node[16] >> 16` and a specializer adding the\noperand-form variant on top, and `notes/ir_glasm_map.json` turns the result\ninto a GLASM opcode.  So this map is the missing middle, and it is read here by\nwalking each arm's control flow rather than by matching listings.\n\nAn arm that reaches more than one (factory, base) pair is REPORTED AS SUCH, not\ncollapsed to a guess.\n",
+ "map": {
+  "0x0": {
+   "arm": "0xf42054",
+   "calls": []
+  },
+  "0x1": {
+   "arm": "0xf42004",
+   "calls": []
+  },
+  "0x2": {
+   "arm": "0xf42004",
+   "calls": []
+  },
+  "0x3": {
+   "arm": "0xf42148",
+   "calls": [
+    "0xfabdb0:0x32"
+   ]
+  },
+  "0x4": {
+   "arm": "0xf42148",
+   "calls": [
+    "0xfabdb0:0x32"
+   ]
+  },
+  "0x5": {
+   "arm": "0xf42148",
+   "calls": [
+    "0xfabdb0:0x32"
+   ]
+  },
+  "0x6": {
+   "arm": "0xf42148",
+   "calls": [
+    "0xfabdb0:0x32"
+   ]
+  },
+  "0x7": {
+   "arm": "0xf42148",
+   "calls": [
+    "0xfabdb0:0x32"
+   ]
+  },
+  "0x8": {
+   "arm": "0xf42148",
+   "calls": [
+    "0xfabdb0:0x32"
+   ]
+  },
+  "0x9": {
+   "arm": "0xf42148",
+   "calls": [
+    "0xfabdb0:0x32"
+   ]
+  },
+  "0xa": {
+   "arm": "0xf42148",
+   "calls": [
+    "0xfabdb0:0x32"
+   ]
+  },
+  "0xb": {
+   "arm": "0xf42148",
+   "calls": [
+    "0xfabdb0:0x32"
+   ]
+  },
+  "0xc": {
+   "arm": "0xf42088",
+   "calls": []
+  },
+  "0xd": {
+   "arm": "0xf42098",
+   "calls": []
+  },
+  "0xe": {
+   "arm": "0xf42148",
+   "calls": [
+    "0xfabdb0:0x32"
+   ]
+  },
+  "0xf": {
+   "arm": "0xf420c4",
+   "calls": [
+    "0xfabdb0:0x32"
+   ]
+  },
+  "0x10": {
+   "arm": "0xf420f8",
+   "calls": []
+  },
+  "0x11": {
+   "arm": "0xf4211c",
+   "calls": [
+    "0xfabdb0:0x32"
+   ]
+  },
+  "0x12": {
+   "arm": "0xf42130",
+   "calls": [
+    "0xfabdb0:0x32"
+   ]
+  },
+  "0x13": {
+   "arm": "0xf4218c",
+   "calls": [
+    "0xfabdb0:0x32"
+   ]
+  },
+  "0x14": {
+   "arm": "0xf421a8",
+   "calls": [
+    "0xfabdb0:0x33"
+   ]
+  },
+  "0x15": {
+   "arm": "0xf421c4",
+   "calls": []
+  },
+  "0x16": {
+   "arm": "0xf4220c",
+   "calls": []
+  },
+  "0x17": {
+   "arm": "0xf42250",
+   "calls": [
+    "0xfab7b0:0x21"
+   ]
+  },
+  "0x18": {
+   "arm": "0xf42270",
+   "calls": [
+    "0xfab7b0:0x24"
+   ]
+  },
+  "0x19": {
+   "arm": "0xf42290",
+   "calls": [
+    "0xfab7b0:0x27"
+   ]
+  },
+  "0x1a": {
+   "arm": "0xf422bc",
+   "calls": [
+    "0xfab7b0:0x2a"
+   ]
+  },
+  "0x1b": {
+   "arm": "0xf422e8",
+   "calls": [
+    "0xfabdb0:0x30"
+   ]
+  },
+  "0x1c": {
+   "arm": "0xf4230c",
+   "calls": [
+    "0xfabdb0:0x31"
+   ]
+  },
+  "0x1d": {
+   "arm": "0xf42148",
+   "calls": [
+    "0xfabdb0:0x32"
+   ]
+  },
+  "0x1e": {
+   "arm": "0xf42148",
+   "calls": [
+    "0xfabdb0:0x32"
+   ]
+  },
+  "0x1f": {
+   "arm": "0xf42148",
+   "calls": [
+    "0xfabdb0:0x32"
+   ]
+  },
+  "0x20": {
+   "arm": "0xf42330",
+   "calls": [
+    "0xfab880:0x3a"
+   ]
+  },
+  "0x21": {
+   "arm": "0xf42360",
+   "calls": [
+    "0xfab880:0x41"
+   ]
+  },
+  "0x22": {
+   "arm": "0xf42390",
+   "calls": [
+    "0xfab880:0x48"
+   ]
+  },
+  "0x23": {
+   "arm": "0xf423c0",
+   "calls": [
+    "0xfab880:0x4f"
+   ]
+  },
+  "0x24": {
+   "arm": "0xf423f0",
+   "calls": [
+    "0xfab880:0x56"
+   ]
+  },
+  "0x25": {
+   "arm": "0xf42420",
+   "calls": [
+    "0xfab880:0x5d"
+   ]
+  },
+  "0x26": {
+   "arm": "0xf42450",
+   "calls": [
+    "0xfab880:0x64"
+   ]
+  },
+  "0x27": {
+   "arm": "0xf42480",
+   "calls": [
+    "0xfabaf0:0x6b"
+   ]
+  },
+  "0x28": {
+   "arm": "0xf424b4",
+   "calls": [
+    "0xfabaf0:0x6f"
+   ]
+  },
+  "0x29": {
+   "arm": "0xf424e8",
+   "calls": [
+    "0xfabaf0:0x73"
+   ]
+  },
+  "0x2a": {
+   "arm": "0xf42518",
+   "calls": [
+    "0xfabaf0:0x77"
+   ]
+  },
+  "0x2b": {
+   "arm": "0xf42548",
+   "calls": [
+    "0xfabaf0:0x7b"
+   ]
+  },
+  "0x2c": {
+   "arm": "0xf42578",
+   "calls": [
+    "0xfabaf0:0x82"
+   ]
+  },
+  "0x2d": {
+   "arm": "0xf425b4",
+   "calls": [
+    "0xfab880:0x89"
+   ]
+  },
+  "0x2e": {
+   "arm": "0xf425e4",
+   "calls": [
+    "0xfab880:0x90"
+   ]
+  },
+  "0x2f": {
+   "arm": "0xf42620",
+   "calls": [
+    "0xfab880:0x97"
+   ]
+  },
+  "0x30": {
+   "arm": "0xf42654",
+   "calls": [
+    "0xfab9f0:0x9e"
+   ]
+  },
+  "0x31": {
+   "arm": "0xf42684",
+   "calls": [
+    "0xfab9f0:0xa6"
+   ]
+  },
+  "0x32": {
+   "arm": "0xf426b4",
+   "calls": [
+    "0xfab9f0:0xa2"
+   ]
+  },
+  "0x33": {
+   "arm": "0xf426f0",
+   "calls": [
+    "0xfaad00:None"
+   ]
+  },
+  "0x34": {
+   "arm": "0xf4275c",
+   "calls": [
+    "0xfaad00:None"
+   ]
+  },
+  "0x35": {
+   "arm": "0xf42794",
+   "calls": [
+    "0xfac1b0:0xb7"
+   ]
+  },
+  "0x36": {
+   "arm": "0xf427c0",
+   "calls": [
+    "0xfac1b0:0xb6"
+   ]
+  },
+  "0x37": {
+   "arm": "0xf427ec",
+   "calls": [
+    "0xfac1b0:0xb1"
+   ]
+  },
+  "0x38": {
+   "arm": "0xf42818",
+   "calls": [
+    "0xfac1b0:0xb3"
+   ]
+  },
+  "0x39": {
+   "arm": "0xf42844",
+   "calls": [
+    "0xfac1b0:0xb0"
+   ]
+  },
+  "0x3a": {
+   "arm": "0xf42870",
+   "calls": [
+    "0xfac1b0:0xb4"
+   ]
+  },
+  "0x3b": {
+   "arm": "0xf4289c",
+   "calls": [
+    "0xfac1b0:0xb5"
+   ]
+  },
+  "0x3c": {
+   "arm": "0xf428c8",
+   "calls": [
+    "0xfac1b0:0xaf"
+   ]
+  },
+  "0x3d": {
+   "arm": "0xf428f4",
+   "calls": [
+    "0xfac1b0:0xb2"
+   ]
+  },
+  "0x3e": {
+   "arm": "0xf42920",
+   "calls": [
+    "0xfac1b0:0xb8"
+   ]
+  },
+  "0x3f": {
+   "arm": "0xf4295c",
+   "calls": []
+  },
+  "0x40": {
+   "arm": "0xf42958",
+   "calls": []
+  },
+  "0x41": {
+   "arm": "0xf429e8",
+   "calls": []
+  },
+  "0x42": {
+   "arm": "0xf42a18",
+   "calls": []
+  },
+  "0x43": {
+   "arm": "0xf42a24",
+   "calls": []
+  },
+  "0x44": {
+   "arm": "0xf42a30",
+   "calls": []
+  },
+  "0x45": {
+   "arm": "0xf42a44",
+   "calls": [
+    "0xfab880:0xc8"
+   ]
+  },
+  "0x46": {
+   "arm": "0xf42148",
+   "calls": [
+    "0xfabdb0:0x32"
+   ]
+  },
+  "0x47": {
+   "arm": "0xf42a74",
+   "calls": [
+    "0xfab7b0:0x2d"
+   ]
+  },
+  "0x48": {
+   "arm": "0xf42ab4",
+   "calls": [
+    "0xfab880:0x2e"
+   ]
+  }
+ }
+}

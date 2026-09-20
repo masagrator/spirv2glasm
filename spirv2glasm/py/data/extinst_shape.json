@@ -1,0 +1,1761 @@
+{
+ "note": "extshape.py -- what SHAPE each GLSL.std.450 instruction lowers to.\n\nnotes/39 established the chain that names a builtin's GLASM OPCODE, and it\nalso established why the opcode alone is not enough to emit anything: cgc\nINLINES a builtin that has a body (`sign` becomes SLT/SGT/ADD/I2F, not `SSG`),\nand it SCALARISES the transcendentals (one instruction per component, not one\nwhole-vector instruction).  Emitting from the opcode alone got 6 probes wrong.\n\nThe missing fact is not in the opcode table; it is in what the front end\nbuilds.  `g2s_trace_fold` dumps every node of the emit list with its opcode and\nits destination mask (notes/49), so running the oracle answers it directly:\n\n    one node, mask 0xffffffff   -> ONE whole-vector instruction\n    four nodes, masks .x        -> scalarised, one per component\n    several unrelated opcodes   -> the builtin was inlined\n\nThis writes that measurement to `notes/extinst_shape.json`, with the mnemonic\nthe image's namer table gives for the measured opcode and the opcode the\nnotes/39 chain independently predicts, so the two can be compared.  The\nemitter consults it and refuses anything that is not `single`.\n\nTHIS IS A MEASUREMENT OF THE COMPILER, NOT OF A LISTING.  The opcode and the\nmask come out of the front end's own nodes; the mnemonic and the type suffix\ncome out of the image's tables.  No listing text is read.\n",
+ "shape": {
+  "1": {
+   "all_nodes": {
+    "0x18": {
+     "count": 1,
+     "masks": [
+      "0xff"
+     ]
+    },
+    "0x2b": {
+     "count": 3,
+     "masks": [
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x2d": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x3a": {
+     "count": 5,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000",
+      "0xffffffff"
+     ]
+    },
+    "0x47": {
+     "count": 7,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x6c": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    }
+   },
+   "chain_opcode": 108,
+   "nodes": {
+    "0x6c": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ],
+     "mnemonic": "ROUND",
+     "mode": 2
+    }
+   },
+   "probe": "un_round.vert",
+   "single": {
+    "mnemonic": "ROUND",
+    "mode": 2,
+    "opcode": "0x6c"
+   },
+   "width": 4
+  },
+  "10": {
+   "all_nodes": {
+    "0x18": {
+     "count": 1,
+     "masks": [
+      "0xff"
+     ]
+    },
+    "0x2b": {
+     "count": 3,
+     "masks": [
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x2d": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x3a": {
+     "count": 5,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000",
+      "0xffffffff"
+     ]
+    },
+    "0x47": {
+     "count": 7,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x6f": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    }
+   },
+   "chain_opcode": null,
+   "nodes": {
+    "0x6f": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    }
+   },
+   "probe": "un_fract.vert",
+   "single": {
+    "mnemonic": "FRC",
+    "mode": 0,
+    "opcode": "0x6f"
+   },
+   "width": 4
+  },
+  "13": {
+   "all_nodes": {
+    "0x18": {
+     "count": 1,
+     "masks": [
+      "0xff"
+     ]
+    },
+    "0x2b": {
+     "count": 3,
+     "masks": [
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x2d": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x3a": {
+     "count": 9,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000",
+      "0xffffffff"
+     ]
+    },
+    "0x47": {
+     "count": 11,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x57": {
+     "count": 3,
+     "masks": [
+      "0xffff",
+      "0xffffff",
+      "0xffffffff"
+     ]
+    },
+    "0x7f": {
+     "count": 4,
+     "masks": [
+      "0xff"
+     ]
+    }
+   },
+   "chain_opcode": null,
+   "nodes": {
+    "0x7f": {
+     "count": 4,
+     "masks": [
+      "0xff"
+     ]
+    }
+   },
+   "probe": "un_sin.vert",
+   "single": null,
+   "width": 4
+  },
+  "14": {
+   "all_nodes": {
+    "0x18": {
+     "count": 1,
+     "masks": [
+      "0xff"
+     ]
+    },
+    "0x2b": {
+     "count": 3,
+     "masks": [
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x2d": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x3a": {
+     "count": 9,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000",
+      "0xffffffff"
+     ]
+    },
+    "0x47": {
+     "count": 11,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x57": {
+     "count": 3,
+     "masks": [
+      "0xffff",
+      "0xffffff",
+      "0xffffffff"
+     ]
+    },
+    "0x66": {
+     "count": 4,
+     "masks": [
+      "0xff"
+     ]
+    }
+   },
+   "chain_opcode": null,
+   "nodes": {
+    "0x66": {
+     "count": 4,
+     "masks": [
+      "0xff"
+     ]
+    }
+   },
+   "probe": "un_cos.vert",
+   "single": null,
+   "width": 4
+  },
+  "26": {
+   "all_nodes": {
+    "0x18": {
+     "count": 1,
+     "masks": [
+      "0xff"
+     ]
+    },
+    "0x2b": {
+     "count": 3,
+     "masks": [
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x2d": {
+     "count": 2,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x3a": {
+     "count": 9,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000",
+      "0xffffffff"
+     ]
+    },
+    "0x47": {
+     "count": 11,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x57": {
+     "count": 3,
+     "masks": [
+      "0xffff",
+      "0xffffff",
+      "0xffffffff"
+     ]
+    },
+    "0x93": {
+     "count": 4,
+     "masks": [
+      "0xff"
+     ]
+    }
+   },
+   "chain_opcode": null,
+   "nodes": {
+    "0x93": {
+     "count": 4,
+     "masks": [
+      "0xff"
+     ]
+    }
+   },
+   "probe": "op_pow.vert",
+   "single": null,
+   "width": 4
+  },
+  "29": {
+   "all_nodes": {
+    "0x18": {
+     "count": 1,
+     "masks": [
+      "0xff"
+     ]
+    },
+    "0x2b": {
+     "count": 3,
+     "masks": [
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x2d": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x3a": {
+     "count": 9,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000",
+      "0xffffffff"
+     ]
+    },
+    "0x47": {
+     "count": 11,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x57": {
+     "count": 3,
+     "masks": [
+      "0xffff",
+      "0xffffff",
+      "0xffffffff"
+     ]
+    },
+    "0x6a": {
+     "count": 4,
+     "masks": [
+      "0xff"
+     ]
+    }
+   },
+   "chain_opcode": null,
+   "nodes": {
+    "0x6a": {
+     "count": 4,
+     "masks": [
+      "0xff"
+     ]
+    }
+   },
+   "probe": "un_exp2.vert",
+   "single": null,
+   "width": 4
+  },
+  "3": {
+   "all_nodes": {
+    "0x18": {
+     "count": 1,
+     "masks": [
+      "0xff"
+     ]
+    },
+    "0x2b": {
+     "count": 3,
+     "masks": [
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x2d": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x3a": {
+     "count": 5,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000",
+      "0xffffffff"
+     ]
+    },
+    "0x47": {
+     "count": 7,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x6c": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    }
+   },
+   "chain_opcode": 108,
+   "nodes": {
+    "0x6c": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ],
+     "mnemonic": "TRUNC",
+     "mode": 4
+    }
+   },
+   "probe": "un_trunc.vert",
+   "single": {
+    "mnemonic": "TRUNC",
+    "mode": 4,
+    "opcode": "0x6c"
+   },
+   "width": 4
+  },
+  "30": {
+   "all_nodes": {
+    "0x18": {
+     "count": 1,
+     "masks": [
+      "0xff"
+     ]
+    },
+    "0x2b": {
+     "count": 3,
+     "masks": [
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x2d": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x3a": {
+     "count": 9,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000",
+      "0xffffffff"
+     ]
+    },
+    "0x47": {
+     "count": 11,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x57": {
+     "count": 3,
+     "masks": [
+      "0xffff",
+      "0xffffff",
+      "0xffffffff"
+     ]
+    },
+    "0x72": {
+     "count": 4,
+     "masks": [
+      "0xff"
+     ]
+    }
+   },
+   "chain_opcode": null,
+   "nodes": {
+    "0x72": {
+     "count": 4,
+     "masks": [
+      "0xff"
+     ]
+    }
+   },
+   "probe": "un_log2.vert",
+   "single": null,
+   "width": 4
+  },
+  "31": {
+   "all_nodes": {
+    "0x18": {
+     "count": 1,
+     "masks": [
+      "0xff"
+     ]
+    },
+    "0x26": {
+     "count": 1,
+     "masks": [
+      "0xff"
+     ]
+    },
+    "0x2b": {
+     "count": 3,
+     "masks": [
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x2d": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x3a": {
+     "count": 10,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000",
+      "0xffffffff"
+     ]
+    },
+    "0x47": {
+     "count": 11,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x57": {
+     "count": 6,
+     "masks": [
+      "0xffff",
+      "0xffffff",
+      "0xffffffff"
+     ]
+    },
+    "0x7b": {
+     "count": 4,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x7c": {
+     "count": 4,
+     "masks": [
+      "0xff"
+     ]
+    },
+    "0x90": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    }
+   },
+   "chain_opcode": null,
+   "nodes": {
+    "0x7b": {
+     "count": 4,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x7c": {
+     "count": 4,
+     "masks": [
+      "0xff"
+     ]
+    },
+    "0x90": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    }
+   },
+   "probe": "un_sqrt.vert",
+   "single": null,
+   "width": 4
+  },
+  "32": {
+   "all_nodes": {
+    "0x18": {
+     "count": 1,
+     "masks": [
+      "0xff"
+     ]
+    },
+    "0x2b": {
+     "count": 3,
+     "masks": [
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x2d": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x3a": {
+     "count": 9,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000",
+      "0xffffffff"
+     ]
+    },
+    "0x47": {
+     "count": 11,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x57": {
+     "count": 3,
+     "masks": [
+      "0xffff",
+      "0xffffff",
+      "0xffffffff"
+     ]
+    },
+    "0x7c": {
+     "count": 4,
+     "masks": [
+      "0xff"
+     ]
+    }
+   },
+   "chain_opcode": null,
+   "nodes": {
+    "0x7c": {
+     "count": 4,
+     "masks": [
+      "0xff"
+     ]
+    }
+   },
+   "probe": "un_rsq.vert",
+   "single": null,
+   "width": 4
+  },
+  "37": {
+   "all_nodes": {
+    "0x18": {
+     "count": 1,
+     "masks": [
+      "0xff"
+     ]
+    },
+    "0x2b": {
+     "count": 3,
+     "masks": [
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x2d": {
+     "count": 2,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x3a": {
+     "count": 5,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000",
+      "0xffffffff"
+     ]
+    },
+    "0x47": {
+     "count": 7,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x8e": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    }
+   },
+   "chain_opcode": 142,
+   "nodes": {
+    "0x8e": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    }
+   },
+   "probe": "op_min.vert",
+   "single": {
+    "mnemonic": "MIN",
+    "mode": 0,
+    "opcode": "0x8e"
+   },
+   "width": 4
+  },
+  "38": {
+   "all_nodes": {
+    "0x18": {
+     "count": 1,
+     "masks": [
+      "0xff"
+     ]
+    },
+    "0x2d": {
+     "count": 2,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x3a": {
+     "count": 2,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x47": {
+     "count": 2,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x8e": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    }
+   },
+   "chain_opcode": 142,
+   "nodes": {
+    "0x8e": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    }
+   },
+   "probe": "int_umin.frag",
+   "single": {
+    "mnemonic": "MIN",
+    "mode": 0,
+    "opcode": "0x8e"
+   },
+   "width": 4
+  },
+  "39": {
+   "all_nodes": {
+    "0x18": {
+     "count": 1,
+     "masks": [
+      "0xff"
+     ]
+    },
+    "0x2d": {
+     "count": 2,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x3a": {
+     "count": 2,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x47": {
+     "count": 2,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x8e": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    }
+   },
+   "chain_opcode": 142,
+   "nodes": {
+    "0x8e": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    }
+   },
+   "probe": "int_smin.frag",
+   "single": {
+    "mnemonic": "MIN",
+    "mode": 0,
+    "opcode": "0x8e"
+   },
+   "width": 4
+  },
+  "4": {
+   "all_nodes": {
+    "0x18": {
+     "count": 1,
+     "masks": [
+      "0xff"
+     ]
+    },
+    "0x2b": {
+     "count": 3,
+     "masks": [
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x2d": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x3a": {
+     "count": 5,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000",
+      "0xffffffff"
+     ]
+    },
+    "0x47": {
+     "count": 8,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000",
+      "0xffffffff"
+     ]
+    }
+   },
+   "chain_opcode": 99,
+   "nodes": {},
+   "probe": "un_abs.vert",
+   "single": null,
+   "width": 4
+  },
+  "40": {
+   "all_nodes": {
+    "0x18": {
+     "count": 1,
+     "masks": [
+      "0xff"
+     ]
+    },
+    "0x2b": {
+     "count": 3,
+     "masks": [
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x2d": {
+     "count": 2,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x3a": {
+     "count": 5,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000",
+      "0xffffffff"
+     ]
+    },
+    "0x47": {
+     "count": 7,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x8d": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    }
+   },
+   "chain_opcode": 141,
+   "nodes": {
+    "0x8d": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    }
+   },
+   "probe": "op_max.vert",
+   "single": {
+    "mnemonic": "MAX",
+    "mode": 0,
+    "opcode": "0x8d"
+   },
+   "width": 4
+  },
+  "41": {
+   "all_nodes": {
+    "0x18": {
+     "count": 1,
+     "masks": [
+      "0xff"
+     ]
+    },
+    "0x2d": {
+     "count": 2,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x3a": {
+     "count": 2,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x47": {
+     "count": 2,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x8d": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    }
+   },
+   "chain_opcode": 141,
+   "nodes": {
+    "0x8d": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    }
+   },
+   "probe": "int_umax.frag",
+   "single": {
+    "mnemonic": "MAX",
+    "mode": 0,
+    "opcode": "0x8d"
+   },
+   "width": 4
+  },
+  "42": {
+   "all_nodes": {
+    "0x18": {
+     "count": 1,
+     "masks": [
+      "0xff"
+     ]
+    },
+    "0x2d": {
+     "count": 2,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x3a": {
+     "count": 2,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x47": {
+     "count": 2,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x8d": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    }
+   },
+   "chain_opcode": 141,
+   "nodes": {
+    "0x8d": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    }
+   },
+   "probe": "int_smax.frag",
+   "single": {
+    "mnemonic": "MAX",
+    "mode": 0,
+    "opcode": "0x8d"
+   },
+   "width": 4
+  },
+  "43": {
+   "all_nodes": {
+    "0x18": {
+     "count": 1,
+     "masks": [
+      "0xff"
+     ]
+    },
+    "0x2b": {
+     "count": 3,
+     "masks": [
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x2d": {
+     "count": 3,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x3a": {
+     "count": 6,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000",
+      "0xffffffff"
+     ]
+    },
+    "0x47": {
+     "count": 7,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x8d": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x8e": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    }
+   },
+   "chain_opcode": 167,
+   "nodes": {
+    "0x8d": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x8e": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    }
+   },
+   "probe": "un_clamp.vert",
+   "single": null,
+   "width": 4
+  },
+  "46": {
+   "all_nodes": {
+    "0x18": {
+     "count": 1,
+     "masks": [
+      "0xff"
+     ]
+    },
+    "0x26": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x2b": {
+     "count": 3,
+     "masks": [
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x2d": {
+     "count": 2,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x3a": {
+     "count": 5,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000",
+      "0xffffffff"
+     ]
+    },
+    "0x47": {
+     "count": 7,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x83": {
+     "count": 2,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x90": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    }
+   },
+   "chain_opcode": null,
+   "nodes": {
+    "0x83": {
+     "count": 2,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x90": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    }
+   },
+   "probe": "op_mix.vert",
+   "single": null,
+   "width": 4
+  },
+  "48": {
+   "all_nodes": {
+    "0x18": {
+     "count": 1,
+     "masks": [
+      "0xff"
+     ]
+    },
+    "0x2b": {
+     "count": 3,
+     "masks": [
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x2d": {
+     "count": 2,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x3a": {
+     "count": 5,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000",
+      "0xffffffff"
+     ]
+    },
+    "0x47": {
+     "count": 7,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x6d": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x70": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x98": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    }
+   },
+   "chain_opcode": null,
+   "nodes": {
+    "0x6d": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ],
+     "mnemonic": "TRUNC",
+     "mode": 4
+    },
+    "0x70": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x98": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    }
+   },
+   "probe": "op_step.vert",
+   "single": null,
+   "width": 4
+  },
+  "6": {
+   "all_nodes": {
+    "0x18": {
+     "count": 1,
+     "masks": [
+      "0xff"
+     ]
+    },
+    "0x26": {
+     "count": 2,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x2b": {
+     "count": 3,
+     "masks": [
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x2d": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x3a": {
+     "count": 6,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000",
+      "0xffffffff"
+     ]
+    },
+    "0x47": {
+     "count": 7,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x6d": {
+     "count": 2,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x70": {
+     "count": 2,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x83": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x99": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x9f": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    }
+   },
+   "chain_opcode": 130,
+   "nodes": {
+    "0x6d": {
+     "count": 2,
+     "masks": [
+      "0xffffffff"
+     ],
+     "mnemonic": "TRUNC",
+     "mode": 4
+    },
+    "0x70": {
+     "count": 2,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x83": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x99": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x9f": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    }
+   },
+   "probe": "un_sign.vert",
+   "single": null,
+   "width": 4
+  },
+  "68": {
+   "all_nodes": {
+    "0x18": {
+     "count": 1,
+     "masks": [
+      "0xff"
+     ]
+    },
+    "0x26": {
+     "count": 1,
+     "masks": [
+      "0xff"
+     ]
+    },
+    "0x2b": {
+     "count": 3,
+     "masks": [
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x2d": {
+     "count": 2,
+     "masks": [
+      "0xffffff"
+     ]
+    },
+    "0x3a": {
+     "count": 6,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000",
+      "0xffffff",
+      "0xffffffff"
+     ]
+    },
+    "0x47": {
+     "count": 13,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x57": {
+     "count": 3,
+     "masks": [
+      "0xffff",
+      "0xffffff",
+      "0xffffffff"
+     ]
+    },
+    "0x83": {
+     "count": 1,
+     "masks": [
+      "0xffffff"
+     ]
+    },
+    "0x90": {
+     "count": 2,
+     "masks": [
+      "0xffffff"
+     ]
+    }
+   },
+   "chain_opcode": null,
+   "nodes": {
+    "0x83": {
+     "count": 1,
+     "masks": [
+      "0xffffff"
+     ]
+    },
+    "0x90": {
+     "count": 2,
+     "masks": [
+      "0xffffff"
+     ]
+    }
+   },
+   "probe": "op_cross.vert",
+   "single": null,
+   "width": 3
+  },
+  "69": {
+   "all_nodes": {
+    "0x18": {
+     "count": 1,
+     "masks": [
+      "0xff"
+     ]
+    },
+    "0x2b": {
+     "count": 3,
+     "masks": [
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x2d": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x3a": {
+     "count": 7,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000",
+      "0xffffffff"
+     ]
+    },
+    "0x47": {
+     "count": 7,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x7c": {
+     "count": 1,
+     "masks": [
+      "0xff"
+     ]
+    },
+    "0x8a": {
+     "count": 1,
+     "masks": [
+      "0xff"
+     ]
+    },
+    "0x90": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    }
+   },
+   "chain_opcode": null,
+   "nodes": {
+    "0x7c": {
+     "count": 1,
+     "masks": [
+      "0xff"
+     ]
+    },
+    "0x8a": {
+     "count": 1,
+     "masks": [
+      "0xff"
+     ]
+    },
+    "0x90": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    }
+   },
+   "probe": "un_normalize.vert",
+   "single": null,
+   "width": 4
+  },
+  "8": {
+   "all_nodes": {
+    "0x18": {
+     "count": 1,
+     "masks": [
+      "0xff"
+     ]
+    },
+    "0x2b": {
+     "count": 3,
+     "masks": [
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x2d": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x3a": {
+     "count": 5,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000",
+      "0xffffffff"
+     ]
+    },
+    "0x47": {
+     "count": 7,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x6e": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    }
+   },
+   "chain_opcode": 110,
+   "nodes": {
+    "0x6e": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    }
+   },
+   "probe": "un_floor.vert",
+   "single": {
+    "mnemonic": "FLR",
+    "mode": 0,
+    "opcode": "0x6e"
+   },
+   "width": 4
+  },
+  "9": {
+   "all_nodes": {
+    "0x18": {
+     "count": 1,
+     "masks": [
+      "0xff"
+     ]
+    },
+    "0x2b": {
+     "count": 3,
+     "masks": [
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x2d": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    },
+    "0x3a": {
+     "count": 5,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000",
+      "0xffffffff"
+     ]
+    },
+    "0x47": {
+     "count": 7,
+     "masks": [
+      "0xff",
+      "0xff00",
+      "0xff0000",
+      "0xff000000"
+     ]
+    },
+    "0x65": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    }
+   },
+   "chain_opcode": 101,
+   "nodes": {
+    "0x65": {
+     "count": 1,
+     "masks": [
+      "0xffffffff"
+     ]
+    }
+   },
+   "probe": "un_ceil.vert",
+   "single": {
+    "mnemonic": "CEIL",
+    "mode": 0,
+    "opcode": "0x65"
+   },
+   "width": 4
+  }
+ }
+}
