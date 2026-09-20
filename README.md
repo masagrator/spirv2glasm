@@ -12,5 +12,5 @@ Nvidia is not involved in this project. Any Nvidia reference comes from glslc sh
 
 Docs:
 - [SPIRV2GLASM](spirv2glasm/SPIRV2GLASM.md)
-- [GLASM-REFERENCE](spirv2glasm/GLASM-REFERENCE.md)
+- [GLASM REFERENCE](spirv2glasm/GLASM-REFERENCE.md)
 - [REBUILDING SETUP](spirv2glasm/SETUP.md)
