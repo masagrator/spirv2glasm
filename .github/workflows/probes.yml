@@ -50,6 +50,6 @@ jobs:
       - name: Check probes
         working-directory: spirv2glasm
         run: |
-          python3 tools/probecheck.py \
+          python3 -u tools/probecheck.py \
               --glslang "$RUNNER_TEMP/glslang/bin/glslangValidator" \
               -j 2
