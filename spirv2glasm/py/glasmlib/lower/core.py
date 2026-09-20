@@ -302,6 +302,8 @@ class Core(object):
         self.cpair = {}
         self.merge_grp = {}             # merge vreg -> its statement's tie
         self.merged = set()             # the merge vregs `_merge_forward` made
+        # merge vreg -> (the local's register, the lanes its pair wrote)
+        self.merge_lanes = {}
         self.lfwd = {}                  # a local's forwardable store
         self.lfwd_line = {}             # local -> the line of that store
         self.load_of = {}               # a whole local load -> (var, reg)
@@ -976,6 +978,8 @@ class Core(object):
         self.ties.append(_grp)
         self.merge_grp[_X] = _grp
         self.merged.add(_X)
+        _wp = _sched.parse(self.lines[_cp[1]])
+        self.merge_lanes[_X] = (_reg, _wp[1][1] if _wp is not None else 0xF)
         # the local is a NAME this block stores, at the merge's statement:
         # pass 1 walks its entry ahead of the reader's (the compiler's list:
         # pair, reader, the local's store)

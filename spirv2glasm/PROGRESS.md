@@ -1,5 +1,22 @@
 # Progress report
 
+**notes/114: the full corpus, module by module.**  The oracle's listings are
+being generated for all 14,630 and compared as they land (11,414 done, DIFFERS
+fixed as they appear).  Six causes so far: a family edge is pushed at the head
+like every other; a scalar lane of a construct stored whole to an output reads
+the lane's source; a load retargeted into a local is forwarded as the local's
+register; a swizzle of lanes a merge's pair passed through keeps the name; the
+CONDITION records are members of the R class's live array (no edge, no
+register, but a slot); and a static load's record is numbered AT ITS READER,
+two under one reader in the reader's operand order.
+
+`tools/recnum.py` is what read the last one: it pairs the two sides by each
+record's (first def, last use, mask) rather than by number, so a numbering
+difference is visible as itself.
+
+Probes 627/627, corpus sample 120/120, slice exact 962 / DIFFERS 0, all
+unchanged.
+
 **Package: 75 files.**  `tools/` (but `tools/probecheck.py`) and `notes/`
 ship as `tools.7z` and `notes.7z` (`mkpackage.sh`).  The converter's tables
 moved from `notes/` to `py/data/`, and `--form control`'s `control_form` from

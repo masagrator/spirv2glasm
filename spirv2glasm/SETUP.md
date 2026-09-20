@@ -243,6 +243,7 @@ kept:
 | `G2S_VLINES=1 spirv2glasm.py x.spv` | our lines with placeholders, and each vreg's record and register |
 | `tools/samecheck.py save\|check <out> <spv-dirs>` | the converter against a saved copy of its own output (refactors that must not change a byte) |
 | `tools/lexfuzz.py [N]` | every regex-free scanner in the compiler against the pattern it replaced (notes/112) |
+| `tools/recnum.py x.spv x.simp` | the compiler's record NUMBERING against ours, paired by (first def, last use, mask) -- for when the numbering itself differs (notes/114) |
 
 Every rule in `py/` has an environment switch that turns it off
 (`G2S_NO...`). The notes name each one. Switching a rule off and re-running a
