@@ -1,6 +1,6 @@
 # GLASM mnemonic reference (GLSLC 17.24, NV_gpu_program5 family)
 
-Scope: what GLSLC 17.24 prints. **Seen** means the form appears in the saved listings (`--opt-level none`, 120 corpus shaders and 137 probes), and the examples are copied from them verbatim. **Vocab** means the name exists in the compiler's opcode namer (`notes/glasm_opcodes.json`) but no saved listing uses it. For those, the meaning comes from the NV_gpu_program4/5 specs and is not verified against this compiler.
+Scope: what GLSLC 17.24 prints. **Seen** means the form appears in the oracle's listings (`--opt-level none`): the 627 probes, the 120-shader corpus sample, the 1,400-shader slice and the full-corpus listings (5,492 listings when this was last checked). The examples are copied from them verbatim, and the probe named with an example is where the converter's rule for it was measured. **Vocab** means the name exists in the compiler's opcode namer (`notes/glasm_opcodes.json`, in `notes.7z`) but no listing uses it. For those, the meaning comes from the NV_gpu_program4/5 specs and is not verified against this compiler.
 
 ---
 
@@ -86,9 +86,14 @@ MNEMONIC[.TYPE][.CC[n]] dst[.mask], src0[, src1[, src2]];
 | `ROUND` | round to nearest | Seen. `ROUND.F R0, vertex.attrib[0];` |
 | `FLR` | floor | Seen. `FLR.F R0.x, R3;` |
 | `CEIL` | ceiling | Seen. `CEIL.F R0, vertex.attrib[0];` |
-| `CVT` | type conversion | Vocab |
+| `CVT` | type conversion, `CVT.<dst>.<src>` | Seen. `CVT.S32.U16 R0.x, R1;` (`ld_r16f`: the 16-bit texel widened before `UP2H`) |
+| `UP2H` | unpack two halfs from one 32-bit word | Seen. `UP2H.F H0.xy, R0.x;` (`ld_r16f`, `ld_rg16f`, `ld_rgba16f`) |
+| `UP2US` | unpack two unsigned 16-bit normalized values | Seen. `UP2US.F R6.xy, R1.x;` (`ld_rgba16`) |
+| `UP4UB` | unpack four unsigned 8-bit normalized values | Seen. `UP4UB.F H0, R0.x;` (`ld_rgba8`) |
 | `PK2H PK2US PK4B PK4UB PK64` | pack floats into half / ushort / byte / ubyte, or two 32-bit values into one 64-bit | Vocab |
-| `UP2H UP2US UP4B UP4UB UP64` | unpack (the inverses) | Vocab |
+| `UP4B UP64` | unpack signed bytes / a 64-bit value | Vocab |
+
+`UP4UB` and `UP2H` write a SHORT register (`H0`, declared `SHORT TEMP H0;`), which a `MOV.F` then copies to an R register.
 
 ---
 
@@ -102,7 +107,7 @@ MNEMONIC[.TYPE][.CC[n]] dst[.mask], src0[, src1[, src2]];
 | `MUL.HI` | high 32 bits of an integer product | Vocab |
 | `MAD` | a × b + c | Vocab |
 | `DIV` | a / b | Seen. `DIV.F32 R6.x, {1, 0, 0, 0}, R8.x;` `DIV.S R0.w, a, b.w;` (the integer form is per component) |
-| `MOD` | integer a mod b | Vocab |
+| `MOD` | integer a mod b | Seen. `MOD.U R0.x, R8.y, {3, 0, 0, 0}.x;` (with `DIV.U R7.x, R8.y, {3, 0, 0, 0}.x;` for the quotient) |
 | `MIN` / `MAX` | component-wise min / max | Seen. `MIN.F R3.x, R2, {1, 0, 0, 0};` `MAX.F R1.xy, R36, {0, 0, 0, 0};` `MIN.U` |
 | `SAD` | \|a − b\| + c | Vocab |
 | `LRP` | a·b + (1 − a)·c | Vocab |
@@ -154,10 +159,10 @@ The branch then tests it: `MOV.U.CC RC.x, R; IF NE.x;`.
 
 | mnemonic | does | forms |
 |---|---|---|
-| `AND` `OR` `XOR` | bitwise | Seen. `AND.U R1.x, R0.y, {15, 0, 0, 0};` `OR.S  D0.x, D0, D1;` `XOR.S` |
-| `NOT` | bitwise not | Vocab |
+| `AND` `OR` `XOR` | bitwise | Seen. `AND.U R1.x, R0.y, {15, 0, 0, 0};` `OR.S  D0.x, D0, D1;` `XOR.S R0, fragment.attrib[0], fragment.attrib[1];` |
+| `NOT` | bitwise not | Seen. `NOT.S R2.x, R0;` |
 | `SHL` / `SHR` | shift left / right (`.S` is arithmetic, `.U` is logical) | Seen. `SHL.S R10.x, R2, {5, 0, 0, 0}.x;` `SHR.U R1.x, R6, {1, 0, 0, 0}.x;` Vector shifts are per component, highest first. |
-| `BFE` | bitfield extract: `BFE dst, {width, offset}, src` | Vocab |
+| `BFE` | bitfield extract: `BFE dst, {width, offset}, src`; `.S` sign-extends | Seen. `BFE.U R1.x, {10, 10, 0, 0}, R7;` (`ld_rgb10_a2`) `BFE.S R3.x, {8, 0, 0, 0}, R1;` (`ld_rgba8_snorm`) |
 | `BFI` | bitfield insert: `BFI dst, {width, offset}, insert, base` | Seen. `BFI.S R0.x, {4, 0, 0, 0}, R1, {4080, 0, 0, 0};` |
 | `BFR` | bit reverse | Vocab |
 | `BTC` | population count | Vocab |
@@ -170,11 +175,13 @@ The branch then tests it: `MOV.U.CC RC.x, R; IF NE.x;`.
 | mnemonic | does | forms |
 |---|---|---|
 | `LDC` | constant (uniform) buffer load; the suffix is the loaded width | Seen. `LDC.F32 R0.x, buf0[680];` `LDC.F32X2 R0.xy, buf5[24];` `LDC.F32X4 R0, buf0[0];` `LDC.S32 R0.x, buf1[0];` `LDC.U32X4 R0.yzw, buf4[0];` `LDC.U64 D0.x, buf14[328];` `LDC.F32X4 R26, buf0[R24.x + 480];` |
-| `LDB` | storage buffer load | Seen. `LDB.U32 R14.x, sbo_buf15[R14.x + 8];` `LDB.F32X4 R0, sbo_buf0[0];` |
-| `STB` | storage buffer store | Seen. `STB.U32 R2, sbo_buf0[0];` |
-| `LOADIM` / `STOREIM` | image load / store | Vocab |
+| `LDB` | storage buffer load | Seen. `LDB.U32 R14.x, sbo_buf15[R14.x + 8];` `LDB.F32X4 R0, sbo_buf0[32];` (`hl_b`) |
+| `STB` | storage buffer store: `STB value, buffer[address]`; the suffix is the stored width | Seen. `STB.U32 R2, sbo_buf0[0];` `STB.F32 R1, sbo_buf0[0];` (`cb_c`) `STB.F32X4 R0, sbo_buf1[16];` (`st_d`) |
+| `LOADIM` | image load: `LOADIM dst, coord, handle(Dn.x), target`; the suffix is the raw texel's width, not the image's format (below) | Seen. `LOADIM.F32X4 R3, {3, 4, 0, 0}, handle(D0.x), 2D;` (`hl_c`) `LOADIM.U32 R6, {1, 2, 0, 0}, handle(D0.x), 2D;` |
+| `STOREIM` | image store: `STOREIM handle(Dn.x), texel, coord, target`; the suffix is the texel's type | Seen. `STOREIM.F handle(D1.x), R1, {1, 2, 0, 0}, 2D;` (`hl_a`) `STOREIM.U handle(D0.x), {3, 3, 3, 3}, {1, 2, 0, 0}, 2D;` (`si_st1`) |
+| `ATOMB.<op>` | atomic on a storage buffer; returns the old value | Seen. `ATOMB.ADD.U32 R17.x, {1, 0, 0, 0}, sbo_buf1[R13.x];` (corpus, `instance_cull_plant_grow-1`; no probe) |
 | `ATOM.<op>` | atomic on global memory; `<op>` is `ADD AND OR XOR MIN MAX EXCH CSWAP IWRAP DWRAP` | Vocab |
-| `ATOMB.<op>` / `ATOMS.<op>` / `ATOMIM.<op>` | atomic on a storage buffer / shared memory / image | Vocab |
+| `ATOMS.<op>` / `ATOMIM.<op>` | atomic on shared memory / an image | Vocab |
 | `ATOMCTR.GET` `ATOMCTROP.CSWAP` | atomic counter | Vocab |
 | `MEMBAR` | memory barrier | Vocab |
 | `LDBB STBB LDMM STMM LDTM STTM LDCB ATTRRD ATTRWR` | name only | Vocab; semantics not established |
@@ -183,7 +190,26 @@ Addressing:
 
 - Offsets are in bytes.
 - A dynamic index is scaled first: `MUL.S R.x, idx, {stride,0,0,0}; MOV.S R.x, R;`.
-- Bindless sampler handles are 64-bit and live in `buf14`: combined samplers at `8·binding`, textures at `328 + 8·binding`, samplers at `1352 + 8·binding`.
+- Bindless sampler handles are 64-bit and live in `buf14`: combined samplers at `8·binding`, textures at `328 + 8·binding`, samplers at `1352 + 8·binding`, storage images at `256 + 8·binding`.
+
+### Image formats and `LOADIM`
+
+The load's width is the texel's storage; the format's own conversion follows
+as ordinary instructions (measured on the `ld_*` probes):
+
+| image format | load | then |
+|---|---|---|
+| `r32f` `rg32f` `rgba32f` | `LOADIM.F32` / `.F32X2` / `.F32X4` | nothing (the full-width formats return the load) |
+| `r32i` `rgba32i` / `r32ui` `rgba32ui` | `LOADIM.S32` / `.S32X4` / `.U32` / `.U32X4` | nothing |
+| `rgba8` | `LOADIM.U32` | `UP4UB.F H0, R.x` |
+| `rgba8_snorm` | `LOADIM.U32` | one `BFE.S {8, 8k}` per lane, then `I2F.S`, `DIV.F32` by 127, `MIN.F` with 1, `MAX.F` with -1 |
+| `rgba8i` / `rgba8ui` | `LOADIM.S32` / `LOADIM.U32` | one `BFE.S` / `BFE.U {8, 8k}` per lane |
+| `r16f` | `LOADIM.U16` | `CVT.S32.U16`, then `UP2H.F` |
+| `rg16f` / `rgba16f` | `LOADIM.U32` / `LOADIM.U32X2` | `UP2H.F` per word |
+| `rgba16` | `LOADIM.U32X2` | `UP2US.F` per word |
+| `rgba16ui` | `LOADIM.U32X2` | `BFE.U {16, 0}` and `{16, 16}` on each word |
+| `rgb10_a2` | `LOADIM.U32` | `BFE.U {10,0} {10,10} {10,20} {2,30}`, `I2F.U`, then a multiply by `RCP {1023, 1023, 1023, 3}` |
+| `r11f_g11f_b10f` | `LOADIM.U32` | `BFE.U {11,0} {11,11} {10,22}`, `SHL.U` by 17/17/18 into the float's mantissa, then a multiply by 2¹¹² |
 
 ---
 
@@ -199,14 +225,16 @@ Addressing:
 | `TXP` | projective | Vocab |
 | `TXFMS` | multisample fetch | Vocab |
 | `TXGO` | gather with offsets | Vocab |
-| `TXQ` / `TXQS` | size / sample-count query | Vocab |
+| `TXQ` | texture size query (`textureSize`): `TXQ dst, lod, handle, target` | Seen. `TXQ   R13, {0, 0, 0, 0}, handle(D0.x), CUBE;` |
+| `TXQS` | sample-count query | Vocab |
 | `LOD` | query LOD | Vocab |
-| `IMQ` / `IMQS` | image size / samples | Vocab |
+| `IMQ` | image size query (`imageSize`); needs `OPTION ARB_shader_image_size` | Seen. `IMQ   R0, handle(D0.x), 3D;` (corpus, `compute_atmosphere_scatter-1`) |
+| `IMQS` | image sample count | Vocab |
 | `TXA` | name only | Vocab |
 | `TEX/TXB/TXL/TXD.FOOTPRINT.FOOTPRINTPRED` | texture footprint query | Vocab |
 
 - Targets seen: `2D`, `3D`, `CUBE`, `SHADOWARRAY2D`. By spec, `1D`, `ARRAY2D`, `SHADOW2D` and `ARRAYCUBE` also exist.
-- Result suffix: `.F` for a float result, `.S`/`.U` for integer textures.
+- Result suffix: `.F` for a float result, `.S`/`.U` for integer textures (`TXF.U R3, R3, handle(D0.x), 2D;`).
 - The coordinate is built in a register when components must be placed, for example the LOD into `.w`.
 
 ---
@@ -255,6 +283,7 @@ Structure:
 | `EMIT` / `EMITS` | emit vertex / emit to stream | Seen. `MOV.F result.position, R; EMIT;` |
 | `ENDPRIM` | end primitive | Seen |
 | `BAR` | workgroup barrier | Vocab |
+| `GROUP_SIZE` | compute workgroup size (a directive) | Seen. `GROUP_SIZE 8 8;` `GROUP_SIZE 64 2 3;` (trailing 1s are dropped) |
 | `TGALL TGANY TGEQ TGBALLOT` | thread-group vote / ballot | Vocab |
 | `SHFIDX SHFUP SHFDOWN SHFXOR` | warp shuffle | Vocab |
 | `MATCH.ANY` / `MATCH.ALL` | warp match | Vocab |

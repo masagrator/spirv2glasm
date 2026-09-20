@@ -41,8 +41,8 @@ by running the compiler's own front end, not by modelling it.
   -- the scheduler and allocator (`sched.py`, `ifg.py`, `regalloc.py`), and
   `binding.py`, the transcription of the compiler's own binding-name
   formatter.
-* **`corpus/`** — the converter that gets 10,328 of the 14,706 real shaders
-  into SPIR-V, and what the other 4,378 run into.
+* **`corpus/`** — the script that gets 14,630 of the 14,706 real shaders
+  into SPIR-V (glslang 15.1.0), and what the other 76 run into.
 * **`probes.7z`** — the probes, as one archive: `probes/` (627 shaders that
   vary one thing at a time, sources only) and `listings/` (the oracle's
   answer for every probe), what `tools/probecheck.py` and `tools/compare.py`

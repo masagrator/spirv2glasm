@@ -4,8 +4,8 @@
 identical 10328  differing 0  failed 0
 ```
 
-Every one of the 10,328 SPIR-V modules built from the 14,706-shader GLSL
-corpus, through the full round trip, with **all three checks**:
+Every one of the 10,328 SPIR-V modules an older `mkcorpus.py` built from the
+14,706-shader GLSL corpus (the current one builds 14,630, README.md), through the full round trip, with **all three checks**:
 
 | check | what it compares | result |
 |---|---|---|
