@@ -530,7 +530,23 @@ class StoreOps(object):
                                                             _dvi):
             self._component_temp_flush(val, v, _cmv)
         self.locals_[var] = dict((i, (_reg, i)) for i in range(4))
-        self.cfw.setdefault(var, {})[ci] = (self._bkey(), v, _sc)
+        _fv, _fc = v, _sc
+        _deep = self._deep_of(v, _sc)
+        if _deep is not None and not ENV.get("G2S_NOLANEDEEP"):
+            # A PLAIN COPY IS TRANSPARENT to a later reader of the lane: the
+            # inserted value is the other local's register, whose own store
+            # is a copy of a value, and the DAG reads that value instead --
+            # as a construct's lane does (core.py `_con_read`).
+            # `map_4a96b6fb-1`: `u_xlat10_25 = texture(..).x; u_xlat4.w =
+            # u_xlat10_25; u_xlat4.w = clamp(u_xlat4.w, 0, 1)` prints `MOV.F
+            # R10.x, R11; MOV.F R1.w, R10.x;` and `MIN.F R8.x, R11, ..` --
+            # the MIN on the TEXTURE (`tools/gsum.py` nodes 121.5 / 121.7 /
+            # 121.10: the lane store reads the copy, the MIN its source).
+            # A copy of another local's NAME is a node of its own and the
+            # read stops at it (`sw_b.frag`, `cfw_deep` is not set there).
+            # `G2S_NOLANEDEEP=1`.
+            _fv, _fc = _deep
+        self.cfw.setdefault(var, {})[ci] = (self._bkey(), _fv, _fc)
         self.cfw_kind[(var, ci)] = ("node" if _is_node
                                     else "merge" if _pmask else "insert")
         if (_is_node and v in self.local_reg.values()
@@ -970,6 +986,19 @@ class StoreOps(object):
                 # a splat's node is the swizzle's MOV, no temp of its own
                 # (`_splat_node`)
                 and val not in self.splat_nodes)
+
+    def _deep_of(self, v, sc):
+        """The value behind a LOCAL'S REGISTER whose store in this block is
+        a plain copy (`cfw_deep`), as `(value, component)`, or None."""
+        _b = v.split(".")[0]
+        for _var, _reg in self.local_reg.items():
+            if _reg != _b:
+                continue
+            _d = self.cfw_deep.get(_var)
+            if _d is None or sc not in _d or _d[sc][0] != self._bkey():
+                return None
+            return _d[sc][1], _d[sc][2]
+        return None
 
     def _record_local_forward(self, ptr, val, v, _reg, selected=False):
         """A LOAD IN THIS BLOCK TAKES THE STORED VALUE: the DAG forwards a
