@@ -1047,10 +1047,22 @@ class StoreOps(object):
             _lo = self.load_of.get(val)
             if _lo is not None and not ENV.get("G2S_NOCOPYCFW"):
                 _sf = self.cfw.get(_lo[0])
+                _sreg = self.local_reg.get(_lo[0])
                 if _sf:
                     for _c, _e in _sf.items():
-                        if _e[0] == bk and _c in self.cfw[ptr]:
+                        if _c not in self.cfw[ptr]:
+                            continue
+                        if _e[0] == bk:
                             self.cfw[ptr][_c] = (bk, _e[1], _e[2])
+                        elif (_sreg is not None
+                              and not ENV.get("G2S_NOCOPYCFWREG")):
+                            # ... and a component the source stored in an
+                            # EARLIER block is read at the copy's line as
+                            # the source's own register, which is what the
+                            # copy forwards (notes/114 §21).  `ct_a.frag`:
+                            # `tools/gsum.py` gives the MUL the same source
+                            # node as the copy's lane-x line, 0x71e8.
+                            self.cfw[ptr][_c] = (bk, _sreg, _c)
             # the store's own line, for a store made from a read this
             # forwards (its `node[36]`, notes/91)
             _lp = _sched.parse(self.lines[-1]) if self.lines else None

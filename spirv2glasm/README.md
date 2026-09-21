@@ -43,7 +43,7 @@ by running the compiler's own front end, not by modelling it.
   formatter.
 * **`corpus/`** — the script that gets 14,630 of the 14,706 real shaders
   into SPIR-V (glslang 15.1.0), and what the other 76 run into.
-* **`probes.7z`** — the probes, as one archive: `probes/` (636 shaders that
+* **`probes.7z`** — the probes, as one archive: `probes/` (640 shaders that
   vary one thing at a time, sources only) and `listings/` (the oracle's
   answer for every probe), what `tools/probecheck.py` and `tools/compare.py`
   measure the Python side against.  Unpack it with `7z x probes.7z`.
@@ -74,7 +74,7 @@ the section and the reason on stderr and exits 3; `--partial` writes the
 established prefix instead (still exit 3).  Exit 1 is an input GLSLC itself
 rejects, 4 a converter bug.  The section join lives in `py/listing.py` and is
 shared with `tools/compare.py`, so the CLI and the measurement cannot drift:
-all 488 probes come out byte-identical to `listings/`.
+all 640 probes come out byte-identical to `listings/`.
 
 ## Probe check (CI)
 
@@ -133,8 +133,8 @@ BIN=<port>/build tools/parverify.sh corpus.txt /tmp/cv 4 --opt-level none --debu
 
 # how far the Python side gets -- on probes, and on real shaders
 python3 tools/compare.py listings probes
-#   exact 0  prefix-only 90  DIFFERS 0  failed 0
-#   966 of 3139 listing lines reproduced (30.8%)
+#   exact 640  prefix-only 0  DIFFERS 0  failed 0
+#   57020 of 57020 listing lines reproduced (100.0%)
 python3 tools/compare.py corpus_listings /path/to/spv
-#   exact 0  prefix-only 119  DIFFERS 0  failed 1
+#   exact 120  prefix-only 0  DIFFERS 0  failed 0   (the 120-shader sample)
 ```

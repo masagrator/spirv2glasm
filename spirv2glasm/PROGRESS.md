@@ -2,11 +2,11 @@
 
 **notes/114: the full corpus, module by module.**  The oracle's listings are
 generated for ALL 14,630 now, and 14,000 of them are compared and clean.
-Eighteen causes so far: a family edge is pushed at the head like every other;
-a scalar lane of a construct stored whole to an output reads the lane's
-source; a load retargeted into a local is forwarded as the local's register;
-a swizzle of lanes a merge's pair passed through keeps the name; the
-CONDITION records are members of the R class's live array (no edge, no
+Twenty-two causes so far: a family edge is pushed at the head like every
+other; a scalar lane of a construct stored whole to an output reads the
+lane's source; a load retargeted into a local is forwarded as the local's
+register; a swizzle of lanes a merge's pair passed through keeps the name;
+the CONDITION records are members of the R class's live array (no edge, no
 register, but a slot); a static load's record is numbered AT ITS READER, two
 under one reader in the reader's operand order; a plain copy is transparent
 to a later read of a lane stored from it; an anti-dependence is made for the
@@ -18,18 +18,28 @@ value read through a selector has no self-move; a constant goes straight
 into a position lane; a scalar interface operand is a whole scalar value, so
 it goes straight to the lane; a construct statement is a group whatever its
 size, so the loads its operands lower to are stamped after it even when it
-writes a single lane; and a whole copy of a local is transparent PER
-COMPONENT, so the copy's reads take what the source's components were stored
-from; a SHUFFLE of a construct reads the lanes' sources, as every other
-reader of one does; and a SELECT's result stored to an output has no
-self-move, because the arms store it.
+writes a single lane; a whole copy of a local is transparent PER COMPONENT,
+so the copy's reads take what the source's components were stored from; a
+SHUFFLE of a construct reads the lanes' sources, as every other reader of
+one does; a SELECT's result stored to an output has no self-move, because
+the arms store it; a PREDICATED select's arm takes the value forwarded from
+the local's store, where the branch form's arms are blocks of their own and
+read the name; a predicated write reads its OWN DESTINATION LAST, after the
+value it writes; a copy's component whose source was stored in an EARLIER
+BLOCK reads the source's register, which is what the copy's own line reads;
+and a construct's LANE-X LOAD writes the construct's register, so the
+statement temp's flush renames that load's line too -- it was being left
+behind, written to a register nothing read, and dropped as dead with the
+lane it carried.
 
-Nine new probes isolate the ones that could be isolated (`wr_a.frag`,
-`hp_a.frag`, `lz_a.frag`, `mc_a.frag`, `sm_a.frag`, `pc_k.vert`,
-`sf_a.frag`, `cs_b.frag`, `sl_a.frag`), and two more are in
-`notes/pending_probes/` -- each turned up a further difference of its own,
-which is what a pending probe is for.  Every probe was checked to FAIL with
-its rule turned off; the two that did not were rewritten until they did.
+Thirteen probes now isolate them, one per rule back to the anti-dependence
+component (`wr_a.frag`, `hp_a.frag`, `lz_a.frag`, `mc_a.frag`, `sm_a.frag`,
+`pc_k.vert`, `sf_a.frag`, `cs_b.frag`, `sl_a.frag`, `sv_e.frag`,
+`sv_d.frag`, `ct_a.frag`, `cg_a.frag`), and `notes/pending_probes/` is empty
+again -- the three that were pending each turned up a further difference of
+its own, which is what a pending probe is for, and all three are read and
+exact now.  Every probe was checked to FAIL with its rule turned off; the
+ones that did not were rewritten until they did.
 
 Three tools read these rather than fitting them.  `tools/recnum.py` pairs
 the two sides' records by (first def, last use, mask) rather than by number,
@@ -41,10 +51,14 @@ rejected the two keys that fitted one listing and cost probes.
 `tools/gsum.py` supplied the `node[36]` stamps behind the handle pair.
 
 THE LAST 630 LISTINGS, generated last, had never been compared: 310 of them
-differ, in register numbering and in where a flush or self-move sits.  Three
-are written up in notes/114 with their evidence, including one whose obvious
-fix makes the right record but prints it in the wrong place -- left open
-rather than guessed.
+differed, in register numbering and in where a flush or self-move sits.  The
+last four causes closed ten of those, so it is 199 exact and 300 DIFFERS
+now, and 279 of the 300 are THE SAME LINE WITH A DIFFERENT REGISTER -- the
+allocator.  The ones written up in notes/114 with their evidence include one
+whose obvious fix makes the right record but prints it in the wrong place,
+and one that fixes a tail shader's record numbering exactly and breaks the
+shader the numbering rule was READ on -- both left open rather than
+guessed.
 
 `tools/p2check.py` (new) says where the rest of that work is: it runs our
 pass 2 on the COMPILER's own blocks -- its stamps, its `entry[68]`, its
@@ -64,8 +78,9 @@ The colouring half is two shapes (`DIV.F32 R?.xy` and `MOV.F R?.x,
 fragment.position`), and reading it needs the compiler's live set at that
 position against ours.
 
-Probes 636/636, corpus sample 120/120, slice exact 962 / DIFFERS 0, all
-unchanged.
+Probes 640/640, corpus sample 120/120, slice exact 962 / DIFFERS 0.  The
+full-corpus regression sweep over all 14,630 modules is the last check
+before a package goes out.
 
 **Package: 75 files.**  `tools/` (but `tools/probecheck.py`) and `notes/`
 ship as `tools.7z` and `notes.7z` (`mkpackage.sh`).  The converter's tables

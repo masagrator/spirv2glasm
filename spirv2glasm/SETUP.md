@@ -204,8 +204,8 @@ name does not collide with an existing probe.
 
 | command | what | expected now (notes/111) |
 |---|---|---|
-| `sh tools/check.sh` | corpus sample + probes, whole listing (about 90 s) | corpus exact 120/120, probes 636/636, DIFFERS 0 |
-| `python3 tools/probecheck.py ...` | probes from source (also what CI runs) | 636 of 636 probes match |
+| `sh tools/check.sh` | corpus sample + probes, whole listing (about 90 s) | corpus exact 120/120, probes 640/640, DIFFERS 0 |
+| `python3 tools/probecheck.py ...` | probes from source (also what CI runs) | 640 of 640 probes match |
 | `python3 tools/compare.py $S/slice_lst $S/slice_spv` | the slice (about 20 min, §7) | see PROGRESS.md for the last run; DIFFERS 0 |
 | `python3 tools/compare.py <lst> <spv> -j 2 --only stems.txt` | the same, in 2 worker processes, only the listed modules (`x.frag`, one per line) | |
 

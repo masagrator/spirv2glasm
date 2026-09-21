@@ -329,6 +329,21 @@ tools/selcheck.py       # the SECOND pass's selection, call by call.
                         # 1791 of 1791 calls.  With no arguments it reads
                         # notes/sel_op_pow.txt, so the rule can be
                         # re-checked without building the oracle.
+tools/recnum.py <spv> <simp-dump>       # the compiler's record NUMBERING
+                        # against ours, paired by (first def, last use, mask)
+tools/waredge.py <spv>  # scores a candidate anti-dependence order against
+                        # every reader in a trace, not against one listing
+tools/p2check.py <spv>  # our pass 2 on the COMPILER'S own blocks: its
+                        # stamps, its entry[68], its edges, against the
+                        # order it printed.  Exonerates (or convicts) the
+                        # selector without touching the lowering.
+tools/regmap.py <a.glasm> <b.glasm>     # pairs the register tokens of two
+                        # listings -- no oracle -- and reports the renaming
+                        # and THE FIRST LINE WHERE IT BREAKS
+tools/ifgjoin.py <spv>  # the two interference graphs, joined through pass
+                        # 1's lists.  The dump goes to a FILE (G2S_KEEPDUMP=
+                        # <path> keeps it); G2S_TIMEOUT for a big shader.
+tools/livecheck.py <spv>                # the compiler's live sets against ours
 tools/compare.py <listings> <spv>       # one directory, line for line
 tools/dis.sh 0x7100045530 0x200         # disassemble by GUEST address
                                         # (ELF=... points at subsdk0.elf)
@@ -345,8 +360,12 @@ sweeps (`parcheck.sh`, `parvar.sh`) take an hour and are for diagnosis only.
 ```
 corpus  (120 listings)   exact 120 prefix-only 0    DIFFERS 0  failed 0
                          120351 of 120351 lines (100.0%)
-probes  (636 listings)    exact 636 prefix-only 0    DIFFERS 0  failed 0
+probes  (640 listings)    exact 640 prefix-only 0    DIFFERS 0  failed 0
                          57020 of 57020 lines (100.0%)
+slice   (1,400 modules)  exact 962 prefix-only 438  DIFFERS 0  failed 0
+full    (14,630 modules) the sweep of notes/114: the tail is 300 DIFFERS
+                         out of the 630 newest listings, 279 of them a
+                         register difference on an identical line
 ```
 
 (notes/111: storage images end to end -- STOREIM, LOADIM in every measured
@@ -355,13 +374,50 @@ STB chains; `notes/pending_probes/` is empty.  The probes ship as ONE
 archive, `probes.7z` (probes/ and listings/); nothing from the corpus is in
 the package, see SETUP.md.)
 
-(notes/114: the full-corpus sweep -- eight causes, including the condition
-records' place in the R live array, the load record numbering at its reader,
-and the component an anti-dependence is made for: the one its writer is the
-LAST to write, so a covered write is made after the writers that keep one.
-`tools/recnum.py` compares the numbering itself, `tools/waredge.py` scores a
-candidate anti-dependence order against every reader in a trace -- use them
-rather than narrowing a rule until a listing matches.)
+(notes/114: the full-corpus sweep (14,630 modules, the oracle's own listings
+for all of them) -- TWENTY-TWO causes so far, each read from a trace.  The
+scheduler's: the condition records' place in the R live array (§5), a static
+load's node and record made AT ITS READER (§6), the component an
+anti-dependence is made for -- the one its writer is the LAST to write (§8),
+a handle pair's two loads made after their OR (§9), and a predicated write
+reading its own destination LAST, after the value it writes (§20).  The
+lowering's: a construct's lane read of a scalar stored whole (§2), a
+retargeted load forwarded as the local (§3), a swizzle of lanes a merge's
+pair passed through (§4), a plain copy transparent to a later lane read (§7),
+`{-0, ...}` (§10), two merge chains in one block (§11), a select's result
+stored to an output (§12, §18), a constant straight into its lane (§13), a
+scalar interface operand as a whole register (§14), a construct statement as
+a group whatever its size (§15), a copy of a local transparent PER COMPONENT
+-- in the block (§16) and, through the source's register, across a block
+boundary (§21), a shuffle that selects lanes of one construct (§17), a
+PREDICATED select's arm taking the forwarded value where the branch form
+reads the name (§19), and the construct's lane-x load renamed by the
+statement's flush (§22, it was being dropped as dead and the lane with it).
+Every one has an off-switch named in the note and a probe of its own.
+
+What is LEFT is the tail: of the 630 newest listings 199 are exact and 300
+differ, and 279 of those 300 are THE SAME LINE WITH A DIFFERENT REGISTER --
+the allocator, not the lowering and not the order.  `tools/p2check.py` runs
+our pass 2 on the compiler's OWN blocks (its stamps, its `entry[68]`, its
+edges) and every block of every shader tried passes, so the selector is
+exonerated; `tools/recnum.py` now agrees with the compiler's record
+NUMBERING on the shaders tried.  So the next read is the interference graph
+and the colouring: `tools/ifgjoin.py` joins the two graphs through pass 1's
+lists and streams the `ifg` dump from a file (it used to read it into a
+string and be killed by the memory limit -- see `ifgcheck.Dump`), and
+`tools/livecheck.py` still comes out with an empty def attribution at the
+positions in question, which is the thing to fix first.
+
+Use these rather than narrowing a rule until a listing matches:
+`tools/recnum.py` (the record numbering itself), `tools/waredge.py` (scores
+a candidate anti-dependence order against every reader in a trace),
+`tools/p2check.py` (pass 2 on the compiler's own input), `tools/regmap.py`
+(pairs the register tokens of two listings with no oracle at all and reports
+the first line where the renaming breaks -- it is what split the tail into
+its colouring and lowering halves).  notes/114 also records the rules that
+were READ AND DROPPED, with what contradicted each; a candidate that fixes
+one shader and breaks the shader an existing rule was read on is not a
+rule.)
 
 (notes/113: a trailing `ENDREP`/`ENDIF` -- inside the last block, with
 the RET -- now gets its dataflow edges, `ifg._trailing_structure`; a lane

@@ -756,7 +756,7 @@ def _pass1_alloc_pass2(lines, cuts, ties, passthru, span_sizes, band,
         return None
     if ENV.get("G2S_VLINES"):
         _dump_vlines(lines, lines1, items1, spans, band, flushed, carriers,
-                     assign, perm, ldc_create, perm1)
+                     assign, perm, ldc_create, perm1, ties)
     return [alloc[i] for i in perm], regs, dregs
 
 
@@ -771,7 +771,7 @@ def _colour_long(lines, spans):
 
 
 def _dump_vlines(lines, lines1, items1, spans, band, flushed, carriers,
-                 assign, perm, ldc_create=None, perm1=None):
+                 assign, perm, ldc_create=None, perm1=None, ties=()):
     """Diagnosis only: the final order with each line's placeholders and
     record indices, to join against `tools/nodedump.py`'s `vr=`."""
     _idx = _ifg.order_records(
@@ -784,8 +784,10 @@ def _dump_vlines(lines, lines1, items1, spans, band, flushed, carriers,
                                None if ENV.get("G2S_NOMCMADE") else perm1))
     sys.stderr.write("REGS %s\n" % sorted(
         (_idx[v], v, assign[v]) for v in assign))
+    _sq = _sched._seq_keys(len(lines), ties or [])
     for i in perm:
-        sys.stderr.write("VLINE %s\n" % lines[i])
+        sys.stderr.write("VLINE %-52s line=%d seq=%s\n"
+                         % (lines[i], i, _sq[i] if i < len(_sq) else None))
 
 
 class Finish(object):
