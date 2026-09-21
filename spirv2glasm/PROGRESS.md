@@ -2,7 +2,7 @@
 
 **notes/114: the full corpus, module by module.**  The oracle's listings are
 generated for ALL 14,630 now, and 14,000 of them are compared and clean.
-Twenty-two causes so far: a family edge is pushed at the head like every
+Twenty-four causes so far: a family edge is pushed at the head like every
 other; a scalar lane of a construct stored whole to an output reads the
 lane's source; a load retargeted into a local is forwarded as the local's
 register; a swizzle of lanes a merge's pair passed through keeps the name;
@@ -30,12 +30,18 @@ BLOCK reads the source's register, which is what the copy's own line reads;
 and a construct's LANE-X LOAD writes the construct's register, so the
 statement temp's flush renames that load's line too -- it was being left
 behind, written to a register nothing read, and dropped as dead with the
-lane it carried.
+lane it carried; and a NEGATED whole read of a merged local reads the MERGE,
+like the bare read and the swizzled read beside it -- the negation is the
+operand SLOT's modifier (notes/47), not part of the name, and the
+whole-read arm of `_merge_forward`'s rewrite was the only one that did not
+accept it; and a PER-VERTEX INPUT ARRAY's first index is the VERTEX, not a
+component -- `v[1]` prints `vertex[1].attrib[0]` where we printed a swizzle
+of `vertex.attrib[0]`.
 
-Thirteen probes now isolate them, one per rule back to the anti-dependence
+Fifteen probes now isolate them, one per rule back to the anti-dependence
 component (`wr_a.frag`, `hp_a.frag`, `lz_a.frag`, `mc_a.frag`, `sm_a.frag`,
 `pc_k.vert`, `sf_a.frag`, `cs_b.frag`, `sl_a.frag`, `sv_e.frag`,
-`sv_d.frag`, `ct_a.frag`, `cg_a.frag`), and `notes/pending_probes/` is empty
+`sv_d.frag`, `ct_a.frag`, `cg_a.frag`, `mn_a.frag`, `pv_a.tese`), and `notes/pending_probes/` is empty
 again -- the three that were pending each turned up a further difference of
 its own, which is what a pending probe is for, and all three are read and
 exact now.  Every probe was checked to FAIL with its rule turned off; the
@@ -52,8 +58,9 @@ rejected the two keys that fitted one listing and cost probes.
 
 THE LAST 630 LISTINGS, generated last, had never been compared: 310 of them
 differed, in register numbering and in where a flush or self-move sits.  The
-last four causes closed ten of those, so it is 199 exact and 300 DIFFERS
-now, and 279 of the 300 are THE SAME LINE WITH A DIFFERENT REGISTER -- the
+last six causes closed twenty-four of those, so it is 210 exact and 289
+DIFFERS now, and all but about a dozen of the 289 are THE SAME LINE WITH A
+DIFFERENT REGISTER -- the
 allocator.  The ones written up in notes/114 with their evidence include one
 whose obvious fix makes the right record but prints it in the wrong place,
 and one that fixes a tail shader's record numbering exactly and breaks the
@@ -78,9 +85,9 @@ The colouring half is two shapes (`DIV.F32 R?.xy` and `MOV.F R?.x,
 fragment.position`), and reading it needs the compiler's live set at that
 position against ours.
 
-Probes 640/640, corpus sample 120/120, slice exact 962 / DIFFERS 0.  The
-full-corpus regression sweep over all 14,630 modules is the last check
-before a package goes out.
+Probes 642/642, corpus sample 120/120, slice exact 962 / DIFFERS 0.  The
+full-corpus regression sweep over all 14,630 modules is clean outside the
+tail: fourteen chunks of a thousand, DIFFERS 0 in every one.
 
 **Package: 75 files.**  `tools/` (but `tools/probecheck.py`) and `notes/`
 ship as `tools.7z` and `notes.7z` (`mkpackage.sh`).  The converter's tables

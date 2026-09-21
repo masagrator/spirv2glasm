@@ -13,7 +13,8 @@ from glasmlib.common import NotEstablished, ENV, ACCESS_CHAINS
 from glasmlib.types import _components, _glasm_type_code, \
     _pointee_components, _pointee_code, _signedness
 from glasmlib.operands import _scalar_value, _constant_operand, \
-    _interface_operand, _per_vertex_operand
+    _interface_operand, _per_vertex_operand, \
+    _per_vertex_location_operand
 from glasmlib.chains import _buffer_chain, _buffer_chain_via_matrix
 from glasmlib.text import _emit, _source, _swizzle
 from glasmlib.lower.core import _local_chain
@@ -622,6 +623,19 @@ class MemoryOps(object):
         # operand, which is why `cf_if.vert` compares against
         # `vertex.attrib[0]` (bare, meaning `.x`) rather than loading it.
         ch = self.by_result.get(ptr)
+        # ... and a PER-VERTEX INPUT ARRAY's first index is the VERTEX, not
+        # a component (notes/114 SS24): `v[1]` prints `vertex[1].attrib[0]`.
+        # Without this the index was taken for a component and printed as a
+        # swizzle of `vertex.attrib[0]`.  `G2S_NOPVLOC=1` turns it off.
+        if not ENV.get("G2S_NOPVLOC"):
+            _pv = _per_vertex_location_operand(
+                module, ptr, self.model, self.by_result)
+            if _pv is not None:
+                self.values[ins.result] = _pv[0]
+                if _pv[1] is not None:
+                    self.comps[ins.result] = (_pv[1],) * 4
+                    self.scalar.add(ins.result)
+                return
         if (ch is not None and ch.opcode in ACCESS_CHAINS
                 and len(ch.args()) == 2):
             base = _interface_operand(module, ch.args()[0], self.model)

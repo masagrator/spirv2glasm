@@ -360,12 +360,13 @@ sweeps (`parcheck.sh`, `parvar.sh`) take an hour and are for diagnosis only.
 ```
 corpus  (120 listings)   exact 120 prefix-only 0    DIFFERS 0  failed 0
                          120351 of 120351 lines (100.0%)
-probes  (640 listings)    exact 640 prefix-only 0    DIFFERS 0  failed 0
+probes  (642 listings)    exact 642 prefix-only 0    DIFFERS 0  failed 0
                          57020 of 57020 lines (100.0%)
 slice   (1,400 modules)  exact 962 prefix-only 438  DIFFERS 0  failed 0
-full    (14,630 modules) the sweep of notes/114: the tail is 300 DIFFERS
-                         out of the 630 newest listings, 279 of them a
-                         register difference on an identical line
+full    (14,630 modules) the sweep of notes/114: 14,000 clean, and the
+                         tail is 289 DIFFERS
+                         out of the 630 newest listings, nearly all of them
+                         a register difference on an identical line
 ```
 
 (notes/111: storage images end to end -- STOREIM, LOADIM in every measured
@@ -375,7 +376,7 @@ archive, `probes.7z` (probes/ and listings/); nothing from the corpus is in
 the package, see SETUP.md.)
 
 (notes/114: the full-corpus sweep (14,630 modules, the oracle's own listings
-for all of them) -- TWENTY-TWO causes so far, each read from a trace.  The
+for all of them) -- TWENTY-FOUR causes so far, each read from a trace.  The
 scheduler's: the condition records' place in the R live array (§5), a static
 load's node and record made AT ITS READER (§6), the component an
 anti-dependence is made for -- the one its writer is the LAST to write (§8),
@@ -391,13 +392,18 @@ a group whatever its size (§15), a copy of a local transparent PER COMPONENT
 -- in the block (§16) and, through the source's register, across a block
 boundary (§21), a shuffle that selects lanes of one construct (§17), a
 PREDICATED select's arm taking the forwarded value where the branch form
-reads the name (§19), and the construct's lane-x load renamed by the
-statement's flush (§22, it was being dropped as dead and the lane with it).
+reads the name (§19), the construct's lane-x load renamed by the
+statement's flush (§22, it was being dropped as dead and the lane with it),
+a NEGATED whole read of a merged local reading the merge, like the bare
+and swizzled reads beside it (§23 -- the modifier is the operand slot's, not
+part of the name), and a per-vertex input ARRAY whose first index is the
+vertex, not a component (§24).
 Every one has an off-switch named in the note and a probe of its own.
 
-What is LEFT is the tail: of the 630 newest listings 199 are exact and 300
-differ, and 279 of those 300 are THE SAME LINE WITH A DIFFERENT REGISTER --
-the allocator, not the lowering and not the order.  `tools/p2check.py` runs
+What is LEFT is the tail: of the 630 newest listings 210 are exact and 289
+differ, and all but about a dozen of those 289 are THE SAME LINE WITH A
+DIFFERENT REGISTER -- the allocator, not the lowering and not the order.
+The other 14,000 modules sweep clean (DIFFERS 0 in all fourteen chunks).  `tools/p2check.py` runs
 our pass 2 on the compiler's OWN blocks (its stamps, its `entry[68]`, its
 edges) and every block of every shader tried passes, so the selector is
 exonerated; `tools/recnum.py` now agrees with the compiler's record

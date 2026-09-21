@@ -224,6 +224,56 @@ def _interface_operand(module, vid, model):
     return "%s[%d]" % (text, slot - base) if base is not None else text
 
 
+def _per_vertex_location_operand(module, pid, model, by_result):
+    """A USER-DECLARED PER-VERTEX INPUT ARRAY at a constant vertex index:
+    `(vertex[k].attrib[loc], component or None)`, or None.
+
+    `in vec4 v[]` in a tessellation or geometry stage is an ARRAY, so a read
+    of `v[k]` is an access chain whose FIRST index is the vertex, not a
+    component.  The printer's per-vertex arm formats it exactly as it does a
+    built-in member (`opname.PER_VERTEX_IN_33`/`_35`, notes/62), with the
+    location as the slot: `layout(location=0) in vec4 v[]` read at `v[1]`
+    prints `vertex[1].attrib[0]`, and a component of it carries the swizzle
+    (`vertex[0].attrib[0].y`).  The ATTRIB declaration is unchanged
+    (`vertex_attrib[] = { vertex.attrib[0..0] }`).
+    """
+    import opname
+    ch = by_result.get(pid)
+    if ch is None or ch.opcode not in ACCESS_CHAINS:
+        return None
+    args = ch.args()
+    if len(args) not in (2, 3):
+        return None
+    var = args[0]
+    gins = module.globals.get(var)
+    if gins is None or gins.operands[2] != StorageClass.Input:
+        return None
+    kind = _stage_kind(model, StorageClass.Input)
+    if kind not in (GEOMETRY_INPUT_KIND, _TESC_INPUT_KIND, _TESE_INPUT_KIND):
+        return None
+    loc = module.decoration(var, Decoration.Location)
+    if loc is None or module.block_array_depth(var) != 1:
+        return None
+    k = _scalar_value(module, args[1])
+    if k is None:
+        return None
+    table = (opname.PER_VERTEX_IN_35 if kind == _TESE_INPUT_KIND
+             else opname.PER_VERTEX_IN_33)
+    ent = table.get(loc[0])
+    if ent is None:
+        return None
+    fmt, sub = ent
+    if fmt.count("%d") != 2:
+        return None
+    base = fmt % (int(k), loc[0] - (sub or 0))
+    if len(args) == 2:
+        return (base, None)
+    c = _scalar_value(module, args[2])
+    if c is None or not 0 <= int(c) < 4:
+        return None
+    return (base, int(c))
+
+
 def _per_vertex_operand(module, pid, model, by_result):
     """`gl_in[k].member` in the tessellation or geometry stages, or None.
 
