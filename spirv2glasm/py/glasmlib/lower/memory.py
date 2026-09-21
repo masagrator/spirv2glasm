@@ -116,10 +116,48 @@ class MemoryOps(object):
                     # a merge lane of another local's swizzled component
                     # reads the swizzle's node (stores.py `_merge_lane_via`)
                     self.values[ins.result], c0 = _via[1][1], _via[1][2]
+        # A COPY OF ANOTHER LOCAL IS TRANSPARENT, one hop at a time: what
+        # this local forwards is another local's register, and the component
+        # read follows THAT local's own forward for the same component --
+        # the same reading as notes/114 §7 for a lane store, on a read.
+        # `vfx_basic_p.frag`'s `u_xlat0 = movcTemp; .. u_xlat0.y * u_xlat0.x`
+        # prints `MUL.F32 R2.x, R2, R7;` -- what the two lanes of `movcTemp`
+        # were stored from -- where we stopped at `movcTemp` itself.
+        # `G2S_NOCFWCHAIN=1` stops at the first hop.
+        if not ENV.get("G2S_NOCFWCHAIN"):
+            _seen = set()
+            while True:
+                _v = self.values[ins.result]
+                _nx = next((_l for _l, _r in self.local_reg.items()
+                            if _r == _v and _l != var and _l not in _seen),
+                           None)
+                if _nx is None:
+                    break
+                _seen.add(_nx)
+                _f = self.cfw.get(_nx, {}).get(c0)
+                if _f is not None and _f[0] == self._bkey() \
+                        and (_f[1], _f[2]) != (_v, c0):
+                    self.values[ins.result], c0 = _f[1], _f[2]
+                    continue
+                # ... and when that local's own forward is its register (its
+                # lanes were stored one by one), the cell the lane was
+                # stored from
+                _cell = (self.locals_.get(_nx) or {}).get(c0)
+                if _cell is None or (_cell[0], _cell[1]) == (_v, c0):
+                    break
+                self.values[ins.result], c0 = _cell
         if self.values[ins.result] == self.local_reg.get(var):
             # a lane read of the NAME after a merge pair (core.py
             # `_name_read_after_pair`; `cy_g.frag`'s `u3 * u2.w`)
             self._name_read_after_pair(var, {ci}, ins.result)
+        if ENV.get("G2S_CFWDBG"):                          # diagnosis only
+            import sys as _sys
+            _sys.stderr.write(
+                "CFW load %s.%d -> %s.%d cell=%s cfw=%s kind=%s reg=%s\n"
+                % (var, ci, self.values[ins.result], c0, cell,
+                   self.cfw.get(var, {}).get(ci),
+                   self.cfw_kind.get((var, ci)),
+                   self.local_reg.get(var)))
         self.comps[ins.result] = (c0,) * 4
         self.scalar.add(ins.result)
 

@@ -428,6 +428,7 @@ def parse(line):
                and _dn[2] == "$" and _lex.is_digits(_dn[3:]) else None)
         d = (_cc_name("CC1" in _msuf, _dm), d[1])
     out = []
+    _selfread = None
     _pm = _predicated(dst)
     if _pm:
         # A PREDICATED WRITE (`MOV.U R2.xy(NE), ..;`, a vector select) reads
@@ -437,7 +438,14 @@ def parse(line):
         # destination.
         out.append((_cc_name(_pm[0], _pm[1]),
                     _mask_of_letters(_pm[2]) if _pm[2] else d[1]))
-        out.append(d)
+        # ... and its own destination LAST, after the value it writes
+        # (notes/114 §20): `sv_d.frag`'s node 0.5 (`tools/gsum.py`) lists
+        # `srcs=0.4,0.3,0.2` -- the condition, the MUL it writes, and the
+        # const its destination already held.
+        if _os.environ.get("G2S_PREDSELFEARLY"):
+            out.append(d)
+        else:
+            _selfread = d
     if _lmem_name(d[0]) is not None:
         d = (_lmem_name(d[0]), 0xF)
         out.append((d[0], 0xF))
@@ -463,6 +471,8 @@ def parse(line):
             mk = _dot_mask(_DOT_WIDTH[base], s)
         out.append((nm, mk))
         out.extend(_inner_reads(s))
+    if _selfread is not None:
+        out.append(_selfread)
     out.extend(_inner_reads(dst))
     if base in _IMAGE_MEMORY_OPS:
         # THE IMAGE MEMORY (notes/111): an image load or store reads and
@@ -1220,6 +1230,13 @@ def _pass1(items, span, seq, passthru=frozenset(), band=None):
     if picked is None:
         return None
     picked.reverse()
+    if _os.environ.get("G2S_P1DBG"):                   # diagnosis only
+        import sys as _sys
+        _sys.stderr.write("P1 entries %s\n   by_v %s\n   reads %s\n"
+                          "   order %s\n   items %s\n"
+                          % (order_v, dict((v, by_v[v]) for v in order_v),
+                             pairs, picked,
+                             [(i, items[i]) for i in span]))
     return picked
 
 

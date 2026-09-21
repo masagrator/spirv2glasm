@@ -494,7 +494,7 @@ class ControlOps(object):
                 "a vector select on a bool vector that is not a normalised "
                 "comparison")
         self._computation()
-        _mv, _ds, _forms = self._select_arms(ins, ta, fa)
+        _mv, _ds, _forms = self._select_arms(ins, ta, fa, True)
         _nc = _components(self.module, ins.result_type)
         if _splat is not None:
             # ONE BOOL FOR EVERY LANE (`bvec2(b)`): the condition code is
@@ -548,8 +548,18 @@ class ControlOps(object):
         self.wants_cc = True
         self.values[ins.result] = _t
 
-    def _select_arms(self, ins, ta, fa):
-        """The arms' MOV, its mask, and each arm's operand."""
+    def _select_arms(self, ins, ta, fa, predicated=False):
+        """The arms' MOV, its mask, and each arm's operand.
+
+        `predicated`: the PREDICATED form (`_vector_select`), whose arms are
+        in the SAME block.  An arm that loads a local then takes the value
+        forwarded from that local's store in this block (notes/65 §3), as
+        every other read in the block does -- `vfx_multi_color_alpha_p.frag`
+        predicates the LG2s' construct itself, where we wrote the local's
+        name first and predicated that.  The BRANCH form's arms are blocks of
+        their own and read the NAME at the block's entry (notes/81), which is
+        what `dt_v.frag` prints (`MOV.F R0.x, R0;` in its THEN arm).
+        `G2S_SELARMNAME=1` reads the name in both."""
         module = self.module
         _nc = _components(module, ins.result_type)
         _tc = _glasm_type_code(module, ins.result_type)
@@ -562,7 +572,11 @@ class ControlOps(object):
                 "a select whose MOV or mask the image's rules do not give")
         _forms = []
         for _x in (ta, fa):
-            if _x in self.load_of:
+            if (_x in self.load_of
+                    and not (predicated
+                             and self.lfwd.get(self.load_of[_x][0],
+                                               (None,))[0] == self._bkey()
+                             and not ENV.get("G2S_SELARMNAME"))):
                 _f = self.load_of[_x][1]
             else:
                 _f = (_source(self.values, self.comps, _x, _nc)

@@ -407,6 +407,7 @@ class Core(object):
         self.ldc_lines = set()          # the static LDC lines
         self.ldc_dyn = {}               # a dynamic load's vreg -> its block
         self.ldc_at = {}                # a block load -> (its line, its dst)
+        self.lane_load_line = {}        # a construct vreg -> its lane-x LDC
         self.carriers = set()           # vregs an address carrier writes
 
     def _init_calls(self):
@@ -557,7 +558,14 @@ class Core(object):
             _src = _ent[5] if len(_ent) > 5 else _nm
             if _from is not None:
                 _lw = self._fresh()
-                for _k in range(_from, len(lines)):
+                _rng = list(range(_from, len(lines)))
+                _ll0 = self.lane_load_line.get(_nm)
+                if (_ll0 is not None and _ll0 < _from
+                        and not ENV.get("G2S_NOLANELOADFLUSH")):
+                    # the construct's LANE-X LOAD writes the same register
+                    # and was emitted before the statement's first line
+                    _rng.insert(0, _ll0)
+                for _k in _rng:
                     lines[_k] = _lex.sub_name(lines[_k], _nm,
                                               lambda _i, _e: _lw)
                 _src = _lw
@@ -1039,6 +1047,14 @@ class Core(object):
             if is_band:
                 self.band.add(_n)
             self.wide.add(_n)
+        if _lane0_is_load:
+            # THE LANE-X LOAD IS PART OF THE STATEMENT: it writes the
+            # construct's register, so a flush that renames that register
+            # renames the load's line too (notes/114 SS22).
+            _l0 = next((_n for _n, _d in self.ldc_at.values()
+                        if _d == _dst), None)
+            if _l0 is not None:
+                self.lane_load_line[_dst] = _l0
         _s0 = len(lines)
         _tie = []
         _gathers = []

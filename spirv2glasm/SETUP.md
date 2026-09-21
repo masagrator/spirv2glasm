@@ -204,8 +204,8 @@ name does not collide with an existing probe.
 
 | command | what | expected now (notes/111) |
 |---|---|---|
-| `sh tools/check.sh` | corpus sample + probes, whole listing (about 90 s) | corpus exact 120/120, probes 627/627, DIFFERS 0 |
-| `python3 tools/probecheck.py ...` | probes from source (also what CI runs) | 627 of 627 probes match |
+| `sh tools/check.sh` | corpus sample + probes, whole listing (about 90 s) | corpus exact 120/120, probes 640/640, DIFFERS 0 |
+| `python3 tools/probecheck.py ...` | probes from source (also what CI runs) | 640 of 640 probes match |
 | `python3 tools/compare.py $S/slice_lst $S/slice_spv` | the slice (about 20 min, §7) | see PROGRESS.md for the last run; DIFFERS 0 |
 | `python3 tools/compare.py <lst> <spv> -j 2 --only stems.txt` | the same, in 2 worker processes, only the listed modules (`x.frag`, one per line) | |
 
@@ -246,6 +246,7 @@ kept:
 | `tools/recnum.py x.spv x.simp` | the compiler's record NUMBERING against ours, paired by (first def, last use, mask) -- for when the numbering itself differs (notes/114) |
 | `tools/waredge.py [-same] [-v] x.spv...` | candidate ANTI-DEPENDENCE orders scored against every reader in the trace, so the key is read rather than fitted (notes/114 §8) |
 | `tools/p2check.py [-v] x.spv...` | OUR pass 2 on the COMPILER's blocks (its stamps, its edges) against the order it printed -- splits a scheduler bug from a lowering or allocation one (notes/114) |
+| `tools/regmap.py <oracle.glasm> <ours.glasm>` | two listings that differ only in REGISTER NAMES: the renaming, and the first line where it breaks -- where the colouring diverges, with no oracle run (notes/114) |
 | `G2S_TIEDBG=<text> spirv2glasm.py x.spv` | the line groups (`ties`) a line belongs to, and the construct statements |
 | `G2S_TEMPDBG=#n\|* spirv2glasm.py x.spv` | why a stored value is (not) a statement temp with a flush |
 | `G2S_ORACLETIMEOUT=<s>` | how long the trace tools wait for the oracle (a big corpus shader takes minutes) |
