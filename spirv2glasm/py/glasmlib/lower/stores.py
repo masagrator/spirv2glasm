@@ -1036,6 +1036,21 @@ class StoreOps(object):
                      or self.comps.get(val, _IDENTITY) == _IDENTITY))):
             self.lfwd[ptr] = (bk, v, val)
             self.cfw[ptr] = dict((c, (bk, v, c)) for c in range(4))
+            # A WHOLE COPY OF ANOTHER LOCAL IS TRANSPARENT PER COMPONENT:
+            # the copy's reads take what the SOURCE's components were stored
+            # from, not the source's register -- the reading of notes/114 §7
+            # (a plain copy is transparent) on a component read.
+            # `vfx_basic_p.frag`'s `u_xlat0 = movcTemp; .. u_xlat0.y *
+            # u_xlat0.x` prints `MUL.F32 R2.x, R2, R7;`, the select's result
+            # and the lane-x source, where we read `movcTemp` itself.
+            # `G2S_NOCOPYCFW=1` keeps the source's register.
+            _lo = self.load_of.get(val)
+            if _lo is not None and not ENV.get("G2S_NOCOPYCFW"):
+                _sf = self.cfw.get(_lo[0])
+                if _sf:
+                    for _c, _e in _sf.items():
+                        if _e[0] == bk and _c in self.cfw[ptr]:
+                            self.cfw[ptr][_c] = (bk, _e[1], _e[2])
             # the store's own line, for a store made from a read this
             # forwards (its `node[36]`, notes/91)
             _lp = _sched.parse(self.lines[-1]) if self.lines else None
@@ -1382,6 +1397,18 @@ class StoreOps(object):
         out of the block, meets the dead element temps (R0..R3) that pass 1
         lists after it."""
         _sb = self.values.get(val)
+        if ENV.get("G2S_COLDBG"):                          # diagnosis only
+            import sys as _sys
+            _sys.stderr.write(
+                "COLSELF val=%s src=%s sb=%s splat=%s local=%s load=%s "
+                "lname=%s defline=%s defblk=%s blk=%s arm=%s swz=%s "
+                "queued=%s\n"
+                % (val, src, _sb, val in self.splats,
+                   _sb in self.local_reg.values(), val in self.load_of,
+                   val in self.lname, self.defline.get(val),
+                   self.defblk.get(val), self.blk_no, val in self.arm_names,
+                   self._swizzled_local_read(val),
+                   self._temp_store_queued(src)))
         if (src.startswith("#") and val not in self.splats
                 and src == _sb and _is_placeholder(_sb)
                 and _sb not in self.local_reg.values()
@@ -1405,6 +1432,15 @@ class StoreOps(object):
               and not (ENV.get("G2S_NAMESELFMOVE") is None
                        and val in self.load_of
                        and src == self.load_of[val][1])
+              # A SELECT'S RESULT IS NO TEMP OF THIS STATEMENT: the ARMS
+              # store it, so there is nothing to rename -- the same reading
+              # `_is_statement_temp_store` makes for a local store
+              # (`mb_n24.vert`).  `post_sky_dlss_mask.frag` stores the
+              # `(b) ? 1.0 : 0.0` of an IF/ELSE to a colour output and the
+              # compiler prints the store alone.  `G2S_ARMSELFMOVE=1`
+              # restores the line.
+              and not (val in self.arm_names
+                       and not ENV.get("G2S_ARMSELFMOVE"))
               and not self._temp_store_queued(src)):
             self.lines.append("%s %s%s, %s;" % (_mov, src, _ds, src))
 
@@ -2104,6 +2140,14 @@ class StoreOps(object):
             # stored `#122.yzww` to `result.attrib[3].xyz` and we wrote
             # `MOV.F #122.yzww.xyz, #122.yzww;`, which the compiler does not
             # print at all.  `G2S_SELSELFMOVE=1` restores it.
+            pass
+        elif val in self.arm_names and not ENV.get("G2S_ARMSELFMOVE"):
+            # A SELECT'S RESULT IS NO TEMP OF THIS STATEMENT EITHER: the ARMS
+            # store it (`_is_statement_temp_store` says the same for a local
+            # store, `mb_n24.vert`), so the output store has nothing to
+            # rename.  `post_sky_dlss_mask.frag` stores the `(b) ? 1.0 : 0.0`
+            # of an IF/ELSE to `result_color1.x` and the compiler prints
+            # only the store.  `G2S_ARMSELFMOVE=1` restores the line.
             pass
         else:
             self.lines.append("%s %s%s, %s;" % (_mov, src, _ds, src))

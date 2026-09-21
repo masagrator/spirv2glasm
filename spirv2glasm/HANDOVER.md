@@ -345,7 +345,7 @@ sweeps (`parcheck.sh`, `parvar.sh`) take an hour and are for diagnosis only.
 ```
 corpus  (120 listings)   exact 120 prefix-only 0    DIFFERS 0  failed 0
                          120351 of 120351 lines (100.0%)
-probes  (627 listings)    exact 627 prefix-only 0    DIFFERS 0  failed 0
+probes  (636 listings)    exact 636 prefix-only 0    DIFFERS 0  failed 0
                          57020 of 57020 lines (100.0%)
 ```
 

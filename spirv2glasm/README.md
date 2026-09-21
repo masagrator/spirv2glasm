@@ -43,7 +43,7 @@ by running the compiler's own front end, not by modelling it.
   formatter.
 * **`corpus/`** — the script that gets 14,630 of the 14,706 real shaders
   into SPIR-V (glslang 15.1.0), and what the other 76 run into.
-* **`probes.7z`** — the probes, as one archive: `probes/` (627 shaders that
+* **`probes.7z`** — the probes, as one archive: `probes/` (636 shaders that
   vary one thing at a time, sources only) and `listings/` (the oracle's
   answer for every probe), what `tools/probecheck.py` and `tools/compare.py`
   measure the Python side against.  Unpack it with `7z x probes.7z`.

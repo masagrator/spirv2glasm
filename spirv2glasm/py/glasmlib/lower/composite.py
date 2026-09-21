@@ -445,6 +445,22 @@ class CompositeOps(object):
             # a read of the NAME's lanes after a merge pair in the block
             # (core.py `_name_read_after_pair`)
             self._name_read_after_pair(_lwa[0], set(sel), ins.result)
+        # A SHUFFLE OF A CONSTRUCT MADE IN THIS BLOCK reads the lanes'
+        # SOURCES, as every other read of one does (`_con_read`, notes/81
+        # §3): `post_ssaocombine-1.frag`'s `floatBitsToUint(u_xlat0.xyz).xx`
+        # -- the bitcast is the construct -- prints `SHR.U R9.y, R1.x, ..;`,
+        # R1 being what the construct's `.x` lane was written from, where we
+        # read the construct itself.  Only when EVERY selected lane has a
+        # source and they are all the same register, which is what a single
+        # operand can say.  `G2S_NOSHUFCON=1` reads the construct.
+        _cs = [self._con_lane(base, prev[x]) for x in sel] \
+            if not ENV.get("G2S_NOSHUFCON") else []
+        if _cs and all(t is not None for t in _cs) and len(
+                set(t.split(".")[0] for t in _cs)) == 1:
+            self.values[ins.result] = _cs[0].split(".")[0]
+            self.comps[ins.result] = tuple(
+                0 if t.endswith(".x") else 0 for t in _cs)
+            return True
         self.comps[ins.result] = tuple(prev[x] for x in sel)
         self.values[ins.result] = base
         if _ls and any(x in _ls for x in sel) \

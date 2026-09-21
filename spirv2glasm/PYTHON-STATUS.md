@@ -17,7 +17,7 @@ raising* rather than by emitting something plausible — see `NotEstablished` in
 Python side does not claim.  Current figures (notes/113 and after):
 
 ```
-probes       (627)        exact 627   prefix-only 0     DIFFERS 0  failed 0
+probes       (636)        exact 636   prefix-only 0     DIFFERS 0  failed 0
 corpus sample (120)       exact 120   prefix-only 0     DIFFERS 0  failed 0
 slice        (1,400)      exact 962   prefix-only 438   DIFFERS 0  failed 0
                           1,093,657 of 1,848,903 listing lines (59.2%)

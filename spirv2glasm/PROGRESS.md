@@ -2,7 +2,7 @@
 
 **notes/114: the full corpus, module by module.**  The oracle's listings are
 generated for ALL 14,630 now, and 14,000 of them are compared and clean.
-Fourteen causes so far: a family edge is pushed at the head like every other;
+Eighteen causes so far: a family edge is pushed at the head like every other;
 a scalar lane of a construct stored whole to an output reads the lane's
 source; a load retargeted into a local is forwarded as the local's register;
 a swizzle of lanes a merge's pair passed through keeps the name; the
@@ -15,8 +15,21 @@ covers again drops behind the writers that keep one; a handle pair's two
 loads are stamped after their OR, in its operand order; negative zero keeps
 its sign; a merge chain is ordered at the reader's OWN line, not pass 1's; a
 value read through a selector has no self-move; a constant goes straight
-into a position lane; and a scalar interface operand is a whole scalar
-value, so it goes straight to the lane.
+into a position lane; a scalar interface operand is a whole scalar value, so
+it goes straight to the lane; a construct statement is a group whatever its
+size, so the loads its operands lower to are stamped after it even when it
+writes a single lane; and a whole copy of a local is transparent PER
+COMPONENT, so the copy's reads take what the source's components were stored
+from; a SHUFFLE of a construct reads the lanes' sources, as every other
+reader of one does; and a SELECT's result stored to an output has no
+self-move, because the arms store it.
+
+Nine new probes isolate the ones that could be isolated (`wr_a.frag`,
+`hp_a.frag`, `lz_a.frag`, `mc_a.frag`, `sm_a.frag`, `pc_k.vert`,
+`sf_a.frag`, `cs_b.frag`, `sl_a.frag`), and two more are in
+`notes/pending_probes/` -- each turned up a further difference of its own,
+which is what a pending probe is for.  Every probe was checked to FAIL with
+its rule turned off; the two that did not were rewritten until they did.
 
 Three tools read these rather than fitting them.  `tools/recnum.py` pairs
 the two sides' records by (first def, last use, mask) rather than by number,
@@ -41,7 +54,17 @@ ones), so the selector is right and what is left is LOWERING and ALLOCATION:
 a record the compiler makes and we do not, or a register we colour
 differently, which then adds an anti-dependence pass 2 obeys.
 
-Probes 627/627, corpus sample 120/120, slice exact 962 / DIFFERS 0, all
+And `tools/regmap.py` (new) splits the tail in two without running the
+oracle at all: it walks a listing pair, pairs the register tokens of every
+line whose shape matches, and reports the renaming and the first line where
+it breaks.  Over 40 of the differing shaders, 20 are a clean renaming until
+one line -- the COLOURING's, everything before agreeing register for
+register -- and 20 diverge in the program itself, which is the LOWERING's.
+The colouring half is two shapes (`DIV.F32 R?.xy` and `MOV.F R?.x,
+fragment.position`), and reading it needs the compiler's live set at that
+position against ours.
+
+Probes 636/636, corpus sample 120/120, slice exact 962 / DIFFERS 0, all
 unchanged.
 
 **Package: 75 files.**  `tools/` (but `tools/probecheck.py`) and `notes/`
