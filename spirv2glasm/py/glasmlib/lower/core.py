@@ -950,8 +950,16 @@ class Core(object):
                 _head, _sep, _srcs = self.lines[_k].partition(",")
                 if _sep:
                     # `(?<=[ ,])REG(?![\d.])` -> the merge
+                    # A NEGATED (or absolute-value) WHOLE READ is a read
+                    # of the merge like any other (notes/114 SS23): the
+                    # modifier is the operand SLOT's, not part of the name
+                    # (notes/47), and the swizzled arm below already
+                    # accepts `-`/`|`.  `G2S_NOMERGENEG=1` takes only a
+                    # bare read, as before.
                     _srcs = _lex.sub_name(_srcs, _reg, lambda _i, _e: _X,
-                                          prev=" ,", tail=_whole_read_tail)
+                                          prev=(" ," if ENV.get(
+                                              "G2S_NOMERGENEG") else " ,-|"),
+                                          tail=_whole_read_tail)
                     if not ENV.get("G2S_NOMERGESWZ") and _wmask:
                         _pl = _sched.parse(self.lines[_k])
 

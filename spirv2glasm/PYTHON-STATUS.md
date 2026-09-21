@@ -17,19 +17,20 @@ raising* rather than by emitting something plausible — see `NotEstablished` in
 Python side does not claim.  Current figures (notes/114 and after):
 
 ```
-probes       (640)        exact 640   prefix-only 0     DIFFERS 0  failed 0
+probes       (642)        exact 642   prefix-only 0     DIFFERS 0  failed 0
 corpus sample (120)       exact 120   prefix-only 0     DIFFERS 0  failed 0
 slice        (1,400)      exact 962   prefix-only 438   DIFFERS 0  failed 0
                           1,093,657 of 1,848,903 listing lines (59.2%)
 full corpus  (14,630)     swept module by module against the oracle's own
-                          listings (notes/114).  The tail is the 630 newest
-                          of them: 199 exact, 300 DIFFERS, and 279 of those
-                          300 are the SAME LINE WITH A DIFFERENT REGISTER.
+                          listings (notes/114).  14,000 are clean;
+                          the tail is the 630 newest: 210 exact, 289
+                          DIFFERS, all but about a dozen of them the SAME
+                          LINE WITH A DIFFERENT REGISTER.
 ```
 
 `DIFFERS` is 0 everywhere the work reports on (probes, sample, slice); the
 full corpus is the one place it is not, and notes/114 is the running list of
-why -- twenty-two causes read and fixed so far, each with an off-switch and a
+why -- twenty-four causes read and fixed so far, each with an off-switch and a
 probe, plus the candidates that were read and DROPPED because they
 contradicted an already-measured rule.  What is left in that tail is the
 ALLOCATOR: `tools/p2check.py` runs our pass 2 on the compiler's own blocks
