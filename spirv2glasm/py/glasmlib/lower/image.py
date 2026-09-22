@@ -705,7 +705,8 @@ class ImageOps(object):
         if dim is None:
             raise NotEstablished("an image type with no dimension keyword")
         d = self._load_handles(var, _svar)
-        if _lod is not None:
+        if _lod is not None and not coord.startswith("{"):
+            # a constant coordinate already carries the lod's zero in `.w`
             coord = self._lod_coordinate(args, coord, dim, _lod)
         # A SPIR-V value, so a named temp stored in its block: a band record,
         # live to the block's end (`ps_b.frag`: the ADD of two samples
@@ -715,6 +716,65 @@ class ImageOps(object):
         self.lines.append("%s %s, %s, handle(%s.x), %s;"
                           % (_mn, dst, coord, d, dim))
         self.values[ins.result] = dst
+        return True
+
+    def _arm_image_query(self, ins):
+        """`TXQ` -- the size and the level count of an image.
+
+        ONE INSTRUCTION ANSWERS BOTH, and the corpus says so rather than a
+        manual: 2,802 `TXQ` lines across 2,747 listings and every one of them
+        is `TXQ   R?, {0, 0, 0, 0}, handle(D?.x), <DIM>;` -- two forms, CUBE
+        and 2D, differing only in the dimension keyword.  Its destination
+        holds the size in the low lanes and THE NUMBER OF LEVELS IN `.w`:
+        over 900 modules there is exactly one `TXQ` line per query op, the
+        `OpImageQueryLevels` results are read at `.w` in 84 of 84 sampled
+        (and `MOV.S R?.x, R?.w` follows a `TXQ` 904 times in the corpus),
+        and the `OpImageQuerySizeLod` results are read at `.xy`.
+
+        NO TYPE SUFFIX.  `mnemonic_for_opcode` would give `TXQ.S` for an
+        `int` result, and the compiler prints `TXQ` bare in all 2,802 --
+        so the mnemonic is written out rather than built from the suffix
+        table, which is a reading about this instruction, not a shortcut.
+
+        THE LOD IS ONLY MEASURED AT ZERO.  Every `OpImageQuerySizeLod` in
+        the corpus takes a constant 0 (12 of 12 instances over 1,500
+        modules), so a non-zero one is refused rather than spelled by
+        analogy -- the `{0, 0, 0, 0}` operand may be the lod or may be
+        nothing at all, and nothing here can tell those apart.
+        `OpImageQuerySize` and `OpImageQueryLod` are refused for the same
+        reason: neither appears with a listing to read them from.
+
+        `G2S_NOIMAGEQUERY=1` turns the arm off, which puts the refusal this
+        replaced back -- `probes/tq_a.frag` and `probes/tq_b.frag` then stop
+        instead of matching.
+        """
+        op = ins.opcode
+        if op not in (Op.OpImageQuerySizeLod, Op.OpImageQueryLevels):
+            return False
+        if ENV.get("G2S_NOIMAGEQUERY"):
+            return False                # the refusal this arm replaced
+        args = ins.args()
+        if op == Op.OpImageQuerySizeLod:
+            _l = self.module.result_insn.get(args[1])
+            if (_l is None or _l.opcode != Op.OpConstant
+                    or _l.operands[2] != 0):
+                raise NotEstablished(
+                    "an image size query at a lod other than 0: the "
+                    "compiler's operand has only been seen as {0, 0, 0, 0}")
+        var, _svar = self._sampler_of(args[0])
+        dim = _image_dim(self.module, var)
+        if dim is None:
+            raise NotEstablished("an image type with no dimension keyword")
+        self._computation()
+        d = self._load_handles(var, _svar)
+        # the same band record a sample's destination gets (`_arm_image_op`)
+        dst = (self._fresh(True) if not ENV.get("G2S_TEXNOBAND")
+               else self._fresh())
+        self.lines.append(_emit("TXQ", dst, "{0, 0, 0, 0}",
+                                "handle(%s.x)" % d, dim))
+        self.values[ins.result] = dst
+        if op == Op.OpImageQueryLevels:
+            self.comps[ins.result] = (3,) * 4
         return True
 
     def _sampler_of(self, sid):
@@ -852,6 +912,34 @@ class ImageOps(object):
             # selector (`si_e.comp`: `TXF.F R3, {1, 0, 0, 0}, handle(D1.x),
             # BUFFER;`)
             return _constant_source(module, args[1], 1)
+        if (coord is None and args[1] in module.constants
+                and not ENV.get("G2S_NOCONSTCOORD")):
+            # A CONSTANT COORDINATE PRINTS AS A CONSTANT, with no register
+            # built for it.  `texelFetch(tex, ivec2(0, 0), 0)` is `TXF.F R?,
+            # {0, 0, 0, 0}, handle(D?.x), 2D;` -- 2,449 of them in the
+            # corpus, all identical -- and the zero padding to four is what
+            # `_constant_operand` already does for every other constant
+            # operand.  That the components come first and the padding after
+            # is read from the two NON-ZERO cases the corpus has: `TEX.F R?,
+            # {0.5, 0.5, 0, 0}, ..` and `TXL.F R?, {0.5, 0.5, 0, 0}, ..`
+            # from a `vec2(0.5, 0.5)`.
+            #
+            # THE LOD MUST BE ZERO.  For a lod op the lod rides in the
+            # coordinate's `.w` (notes/61), and every constant-coordinate
+            # line in the corpus has 0 there, so a non-zero lod cannot be
+            # told from padding and is refused instead of spelled.
+            _kc = module.constants.get(args[1])
+            if _kc is not None and _kc.opcode == Op.OpConstantComposite:
+                _lid = getattr(self, "_lod_id", None)
+                if _lid is not None:
+                    _li = module.result_insn.get(_lid)
+                    if (_li is None or _li.opcode != Op.OpConstant
+                            or _li.operands[2] != 0):
+                        raise NotEstablished(
+                            "a constant image coordinate with a non-zero "
+                            "lod: the lod rides in `.w` and every constant "
+                            "coordinate measured has 0 there")
+                return _constant_source(module, args[1], 4)
         if coord is not None and args[1] in self.comps and _lod is None:
             # the coordinate's selector, against its own width
             # (`map_15393bbe`: `texture(.., u_xlat0.zw)` prints `TEX.F R9,

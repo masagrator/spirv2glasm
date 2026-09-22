@@ -370,7 +370,7 @@ sweeps (`parcheck.sh`, `parvar.sh`) take an hour and are for diagnosis only.
 ```
 corpus  (120 listings)   exact 120 prefix-only 0    DIFFERS 0  failed 0
                          120351 of 120351 lines (100.0%)
-probes  (650 listings)    exact 650 prefix-only 0    DIFFERS 0  failed 0
+probes  (654 listings)    exact 654 prefix-only 0    DIFFERS 0  failed 0
                          57020 of 57020 lines (100.0%)
 slice   (1,400 modules)  exact 962 prefix-only 438  DIFFERS 0  failed 0
 full    (14,630 modules) the sweep of notes/114: 14,000 clean, and the

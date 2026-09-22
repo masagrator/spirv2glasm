@@ -118,7 +118,7 @@ The colouring half is two shapes (`DIV.F32 R?.xy` and `MOV.F R?.x,
 fragment.position`), and reading it needs the compiler's live set at that
 position against ours.
 
-Probes 650/650, corpus sample 120/120, slice exact 962 / DIFFERS 0.  The
+Probes 654/654, corpus sample 120/120, slice exact 962 / DIFFERS 0.  The
 full-corpus regression sweep over all 14,630 modules is clean outside the
 tail: fourteen chunks of a thousand, DIFFERS 0 in every one.
 
