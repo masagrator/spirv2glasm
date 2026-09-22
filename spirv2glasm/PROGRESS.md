@@ -2,7 +2,7 @@
 
 **notes/114: the full corpus, module by module.**  The oracle's listings are
 generated for ALL 14,630 now, and 14,000 of them are compared and clean.
-Twenty-four causes so far: a family edge is pushed at the head like every
+Twenty-eight causes so far: a family edge is pushed at the head like every
 other; a scalar lane of a construct stored whole to an output reads the
 lane's source; a load retargeted into a local is forwarded as the local's
 register; a swizzle of lanes a merge's pair passed through keeps the name;
@@ -34,18 +34,51 @@ lane it carried; and a NEGATED whole read of a merged local reads the MERGE,
 like the bare read and the swizzled read beside it -- the negation is the
 operand SLOT's modifier (notes/47), not part of the name, and the
 whole-read arm of `_merge_forward`'s rewrite was the only one that did not
-accept it; and a PER-VERTEX INPUT ARRAY's first index is the VERTEX, not a
+accept it; a PER-VERTEX INPUT ARRAY's first index is the VERTEX, not a
 component -- `v[1]` prints `vertex[1].attrib[0]` where we printed a swizzle
-of `vertex.attrib[0]`.
+of `vertex.attrib[0]`; a `KIL` is a NODE OF ITS BLOCK and not a barrier of
+its own, which changes no listing and is here because it is what the
+compiler's blocks are (`g2s_st`) and because the graph join could not be
+made to work without it; and a CUBE SAMPLE READS THREE COMPONENTS of its
+coordinate, as a 2D one reads two (notes/87) -- reading all four left the
+coordinate's `.w` live from the program's entry, never written, meeting
+EVERY temp in the graph.  One more is a BUG of ours rather than a rule
+(§27): `_drop_lines` renumbers every line index the lowering records, and
+the three maps the construct statements use (§15, §22) were added after it
+and never joined the list, so on any shader where a line was dropped the
+lane-x load's tie was made for the wrong line.  And a SELECTION OF AN IMAGE
+RESULT that a local's store materialises is a node of its own (§28): an
+image op is not a node of the emit list at all, so the selection has nothing
+to be a selector on -- and it is a node of its own only when its value has
+TWO readers in the block, which is `_flush`'s own reading.  Three earlier
+spellings of that one were written and dropped, each costing probes; the
+first was reached for because a probe failed, which is fitting, and the note
+records it as that.
 
-Fifteen probes now isolate them, one per rule back to the anti-dependence
+Seventeen probes now isolate them, one per rule back to the anti-dependence
 component (`wr_a.frag`, `hp_a.frag`, `lz_a.frag`, `mc_a.frag`, `sm_a.frag`,
 `pc_k.vert`, `sf_a.frag`, `cs_b.frag`, `sl_a.frag`, `sv_e.frag`,
-`sv_d.frag`, `ct_a.frag`, `cg_a.frag`, `mn_a.frag`, `pv_a.tese`), and `notes/pending_probes/` is empty
-again -- the three that were pending each turned up a further difference of
-its own, which is what a pending probe is for, and all three are read and
-exact now.  Every probe was checked to FAIL with its rule turned off; the
+`sv_d.frag`, `ct_a.frag`, `cg_a.frag`, `mn_a.frag`, `pv_a.tese`, `cu_d.frag`, `im_sel.frag`).  §25 has no probe and the note says why: with the rule on and
+off every shader prints the same, so there is nothing for a probe to
+discriminate on -- the evidence is the compiler's block list.
+`notes/pending_probes/` holds one, `cc_a.frag`, which reduces the largest
+of the three families still open to 40 lines.  Every probe was checked to FAIL with its rule turned off; the
 ones that did not were rewritten until they did.
+
+`tools/degcmp.py` (new) is what read §26, and it is the instrument the
+allocator work needs.  The compiler's interference graph does not have to be
+dumped at all: notes/52's edge rule means the `liveset` trace CONTAINS it,
+and that trace is cheap once `livecheck.py` stops asking for the `vregs`
+gate (nine seconds on a 5,300-line shader instead of not finishing).  On the
+shader that had been the example of the colouring problem it said, in one
+line, what no listing could: every one of our 2,380 records had a degree
+exactly ONE higher than the compiler's, and the extra neighbour was always
+the same record -- a CUBE sample's coordinate, degree 2206 for us against 31
+for the compiler.  `tools/ifgdump.py` (new) compacts the `ifg` trace from
+gigabytes to megabytes, and `G2S_VREGAT` in the hook restricts the record
+dump to one patched site; neither turned out to be needed for §26, and both
+are kept because the sites they expose are the ones a coloured graph would
+have to come from.
 
 Three tools read these rather than fitting them.  `tools/recnum.py` pairs
 the two sides' records by (first def, last use, mask) rather than by number,
@@ -58,9 +91,9 @@ rejected the two keys that fitted one listing and cost probes.
 
 THE LAST 630 LISTINGS, generated last, had never been compared: 310 of them
 differed, in register numbering and in where a flush or self-move sits.  The
-last six causes closed twenty-four of those, so it is 210 exact and 289
-DIFFERS now, and all but about a dozen of the 289 are THE SAME LINE WITH A
-DIFFERENT REGISTER -- the
+last ten causes closed 285 of those, so it is 474 exact and 25 DIFFERS
+now -- 92.0% of the tail's lines against 39.7% -- and §26 alone (a CUBE
+sample reads THREE components of its coordinate) accounts for 253 of them -- the
 allocator.  The ones written up in notes/114 with their evidence include one
 whose obvious fix makes the right record but prints it in the wrong place,
 and one that fixes a tail shader's record numbering exactly and breaks the
@@ -85,7 +118,7 @@ The colouring half is two shapes (`DIV.F32 R?.xy` and `MOV.F R?.x,
 fragment.position`), and reading it needs the compiler's live set at that
 position against ours.
 
-Probes 642/642, corpus sample 120/120, slice exact 962 / DIFFERS 0.  The
+Probes 650/650, corpus sample 120/120, slice exact 962 / DIFFERS 0.  The
 full-corpus regression sweep over all 14,630 modules is clean outside the
 tail: fourteen chunks of a thousand, DIFFERS 0 in every one.
 

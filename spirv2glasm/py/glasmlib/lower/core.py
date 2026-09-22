@@ -380,6 +380,7 @@ class Core(object):
         self.passthru = []              # a local store's pass-through half
         self.calls = []                 # writes that are not statements
         self.vsplit = 0                 # blocks opened by a second store
+        self.fwd_blk = {}               # a forwarded load -> (block, the local's register)
         self.blk_no = 0
         self.blk_node = False
         self.node_next = False
@@ -495,6 +496,31 @@ class Core(object):
         splits."""
         return (self.blk_no, len(self.cuts), self.vsplit)
 
+    def _expire_local_forwards(self):
+        """A LOAD'S FORWARD DIES WITH ITS BLOCK.
+
+        notes/67 SS1: the reader substitutes the load into the statement
+        that uses it, so the load's node is made where the READER is.  A
+        forward recorded in an earlier block is not what the reader sees --
+        it takes the LOCAL.  The converter resolved the load where the
+        `OpLoad` stood, which in `cc_a.frag` is before the second select's
+        IF: `tools/gsum.py` puts the two copies in the compiler's block 1
+        and the construct's reads in block 4, and the reads' source is the
+        local's row (513), not the temp's (514).
+        `G2S_NOFWDEXPIRE=1` keeps the forward."""
+        if ENV.get("G2S_NOFWDEXPIRE"):
+            return
+        _bk = self._bkey()
+        for _res, _e in list(self.fwd_blk.items()):
+            if _e[0] == _bk:
+                continue
+            del self.fwd_blk[_res]
+            if _e[1] is None:
+                continue
+            self.values[_res] = _e[1]
+            self.fwd_of.pop(_res, None)
+            self.fwd_line.pop(_res, None)
+
     def _blk_start(self):
         """The first line of the CURRENT block: after the last cut or
         control-flow line."""
@@ -556,6 +582,48 @@ class Core(object):
         for _ent in todo:
             _nm, _fmv, _fds, _fg, _from = _ent[:5]
             _src = _ent[5] if len(_ent) > 5 else _nm
+            if len(_ent) > 6 and _ent[6] == "selection":
+                # A SELECTION MATERIALISED BY A LOCAL'S STORE is a node of
+                # its own ONLY WHEN ITS VALUE HAS TWO USES -- the reading
+                # `_flush` is built on ("the instruction wrote a lowering
+                # vreg that its in-block readers share; the value has two
+                # uses, so it cannot fold into the name").  With ONE reader
+                # the gather IS the name and there is no copy: the
+                # compiler's `tools/nodedump.py` gives the gather vr 4 (a
+                # NAME's number) in that case and vr 13 with the name's own
+                # vr 4 beside it in the other.
+                # THE READERS THAT COUNT ARE THE ONES THAT SHARE THE
+                # VALUE -- the ones that take its WHOLE mask.  That is the
+                # rule's own wording ("the instruction wrote a lowering vreg
+                # that its in-block readers SHARE"), and counting a reader
+                # of ONE COMPONENT too was what made `post_heat_haze.frag`
+                # differ: its `.xy` selection has three readers and every
+                # one of them takes a single lane (masks .y, .x, .y), so the
+                # old count said 3 and made the copy, while the compiler
+                # makes ONE node there.  `post_monotone.frag`, which the
+                # >= 2 threshold was read from, has two readers and BOTH
+                # take the whole `.xyz` (`MOV.F #5.xyz, #4` and `MIN.F
+                # #6.xyz, #4, {1,1,1,0}`), so it is unchanged.  Over 700
+                # corpus shaders this arm fires 567 times and those two are
+                # the ONLY ones that reach the threshold at all; every other
+                # firing has fewer than two readers either way.
+                # `G2S_SELALLREADS=1` counts one-component readers again.
+                _want = 0
+                for _c in (_fds.lstrip(".") or "xyzw"):
+                    _want |= 1 << "xyzw".index(_c)
+                _all = ENV.get("G2S_SELALLREADS")
+                _n = 0
+                for _k2 in range(_from, len(lines)):
+                    _p2 = _sched.parse(lines[_k2])
+                    if _p2 is None:
+                        continue
+                    if any(_s.strip().split(".")[0] == _nm
+                           and (_all or (_m2 or 0) & _want == _want)
+                           for _s, _m2 in _p2[2]):
+                        _n += 1
+                if _n < 2:
+                    self.stmtpos.pop(_nm, None)
+                    continue
             if _from is not None:
                 _lw = self._fresh()
                 _rng = list(range(_from, len(lines)))

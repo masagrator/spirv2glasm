@@ -266,6 +266,7 @@ class MemoryOps(object):
         `u_xlat1 = vec4(..)` prints `MOV.F result.position.x, R4;` --
         component 0's source (`ce_n29.vert`)."""
         self.values[ins.result] = _fw[1]
+        self.fwd_blk[ins.result] = (self._bkey(), self.local_reg.get(ptr))
         if len(_fw) > 2:
             self.fwd_of[ins.result] = _fw[2]
         if ptr in self.lfwd_line:

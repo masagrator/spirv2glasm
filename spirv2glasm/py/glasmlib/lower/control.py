@@ -98,6 +98,10 @@ class ControlOps(object):
         self.blk_node = False
         getattr(self, self._MARKER_KINDS.get(ins.kind, "_marker_word"))(
             ins, _bk_pre)
+        # ... and only NOW: the condition's `.CC` move is in the block
+        # BEFORE the structure word (`_bk_pre`), and it reads what that
+        # block forwards (`la_a.frag`: `MOV.U.CC RC.x, R1;`).
+        self._expire_local_forwards()
         return True
 
     def _marker_word(self, ins, _bk_pre):
@@ -357,12 +361,15 @@ class ControlOps(object):
         else:
             self.lines.append(_cc_move(c))
         self._open_if()
+        self._expire_local_forwards()
         self.lines.append(_emit(_mv, _t + _ds, _forms[0]))
         self.blk_no += 1
+        self._expire_local_forwards()
         self.lines.append("ELSE;")
         self.lines.append(_emit(_mv, _t + _ds, _forms[1]))
         self.blk_no += 1
         self.lines.append("ENDIF;")
+        self._expire_local_forwards()
         self.blk_node = False
         self.node_next = False
         self.values[ins.result] = _t
@@ -442,6 +449,20 @@ class ControlOps(object):
                 # `(NE.y)`.  The compare has no store of its own because the
                 # store into lane y is an insert (the `sel_n` rule), not
                 # because anything was dropped (notes/104 §9)
+                # ... and that is what the lane decides, not the splat: a
+                # plain store into lane X is not an insert but the value's
+                # own node, and the `.CC` reads what the lane FORWARDS --
+                # the same test `_bool_component_read` makes for an IF's
+                # condition.  `sv_f.frag`: the compiler's `.CC` (node 0.3)
+                # has the TRUNC (0.1) as its source, with the local's store
+                # (0.15) reading it too.  `G2S_NOSPLATFWD=1` reads the
+                # local's lane whatever the kind.
+                _bcf = self.cfw.get(_blc[0], {}).get(_blc[1])
+                if (_bcf is not None and _bcf[0] == self._bkey()
+                        and self.cfw_kind.get(_blc) not in ("insert",
+                                                            "namecopy")
+                        and not ENV.get("G2S_NOSPLATFWD")):
+                    return _bcf[1], _bcf[2]
                 return self.local_reg[_blc[0]], _blc[1]
             if (bd.args()[0] in self.local_reg and b in self.values
                     and not ENV.get("G2S_NOBOOLSPLAT")):
@@ -629,6 +650,11 @@ class ControlOps(object):
             return False
         self.lines.append(_cc_move(_bool_constant(True)))
         self.lines.append("KIL   NE.x;")
+        if not ENV.get("G2S_KILBARRIER"):
+            # ... and the KIL ENDS its block (notes/114 SS25): the `.CC`
+            # move and the `KIL` are two nodes of one block in the
+            # compiler's `g2s_st`, and the next statement opens the next.
+            self.cuts.append(len(self.lines))
         self.wants_cc = True
         return True
 
@@ -657,6 +683,7 @@ class ControlOps(object):
         self.lines.append("CAL   BB@%d (TR);" % _f.result)
         self.stores = 0
         self.blk_no += 2
+        self._expire_local_forwards()
         self.blk_node = False
         self.node_next = False
         _nres, _ds = self._width_suffix(ins.result_type)

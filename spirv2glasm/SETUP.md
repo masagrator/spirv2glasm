@@ -120,6 +120,11 @@ Check the result: `build/spirv2glasm --opt-level none probes/op_mul.vert.spv`
 must print a listing whose first line is a progress banner and whose rest
 equals `listings/op_mul.vert.glasm`.
 
+`G2S_VREGAT=<hex addr>[,<addr>...]` narrows `g2s_dump_vregs` (and the `ifg`
+dump inside it) to one of the nineteen functions it is patched onto: it
+walks every record's whole neighbour list at each, which on a corpus shader
+of a few thousand records is gigabytes and an hour of wall clock.
+
 The trace hooks are enabled with `G2S_TRACE=1 G2S_ONLY=<gates>`. The gates
 are listed in HANDOVER.md §3.2. The ones used most are `fold`, `sel`, `block`,
 `liveset`, `ifg` and `simp`.
@@ -204,8 +209,8 @@ name does not collide with an existing probe.
 
 | command | what | expected now (notes/111) |
 |---|---|---|
-| `sh tools/check.sh` | corpus sample + probes, whole listing (about 90 s) | corpus exact 120/120, probes 642/642, DIFFERS 0 |
-| `python3 tools/probecheck.py ...` | probes from source (also what CI runs) | 642 of 642 probes match |
+| `sh tools/check.sh` | corpus sample + probes, whole listing (about 90 s) | corpus exact 120/120, probes 650/650, DIFFERS 0 |
+| `python3 tools/probecheck.py ...` | probes from source (also what CI runs) | 650 of 650 probes match |
 | `python3 tools/compare.py $S/slice_lst $S/slice_spv` | the slice (about 20 min, §7) | see PROGRESS.md for the last run; DIFFERS 0 |
 | `python3 tools/compare.py <lst> <spv> -j 2 --only stems.txt` | the same, in 2 worker processes, only the listed modules (`x.frag`, one per line) | |
 
@@ -244,6 +249,11 @@ kept:
 | `tools/samecheck.py save\|check <out> <spv-dirs>` | the converter against a saved copy of its own output (refactors that must not change a byte) |
 | `tools/lexfuzz.py [N]` | every regex-free scanner in the compiler against the pattern it replaced (notes/112) |
 | `tools/recnum.py x.spv x.simp` | the compiler's record NUMBERING against ours, paired by (first def, last use, mask) -- for when the numbering itself differs (notes/114) |
+| `tools/schedcheck.py [probe...]` | notes/51's PASS 1 on the compiler's own DAG. The implicit register reads come from `g2s_dag`'s `irr=`, not the fold dump -- reading only the fold lines left them empty and a node held live by one alone looked ready at seeding |
+| `tools/entrydump.py x.spv` | THE BLOCK'S LIVE-ENTRY LIST, `block[80]` -- pass 1's entry order, which nothing printed before the `g2s_trace_entries` hook (0x4a3a4). The entries are the NAMES' stores, in statement order |
+| `tools/degcmp.py x.spv x.lc [x.simp]` | THE TWO INTERFERENCE GRAPHS by degree -- the compiler's is in the `liveset` trace (notes/52's edge rule), so nothing has to be dumped; with the simp dump the records are paired as `recnum.py` pairs them.  This read notes/114 §26 (253 shaders) |
+| `tools/ifgdump.py x.spv out` | the `ifg` trace compacted to the last rows per vreg (gigabytes to megabytes); `G2S_VREGAT=<addr>` narrows the hook's record dump to one patched site, `G2S_IFGKEEP` how many rows to keep |
+| `tools/livecheck.py x.spv` | the compiler's LIVE SETS position by position (`G2S_DUMPFILE` saves/reuses the trace; it asks for `liveset,stamps,node` only, which is what makes it usable on a corpus shader) |
 | `tools/waredge.py [-same] [-v] x.spv...` | candidate ANTI-DEPENDENCE orders scored against every reader in the trace, so the key is read rather than fitted (notes/114 §8) |
 | `tools/p2check.py [-v] x.spv...` | OUR pass 2 on the COMPILER's blocks (its stamps, its edges) against the order it printed -- splits a scheduler bug from a lowering or allocation one (notes/114) |
 | `tools/regmap.py <oracle.glasm> <ours.glasm>` | two listings that differ only in REGISTER NAMES: the renaming, and the first line where it breaks -- where the colouring diverges, with no oracle run (notes/114) |

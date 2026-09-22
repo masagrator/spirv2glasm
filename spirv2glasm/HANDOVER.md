@@ -329,6 +329,16 @@ tools/selcheck.py       # the SECOND pass's selection, call by call.
                         # 1791 of 1791 calls.  With no arguments it reads
                         # notes/sel_op_pow.txt, so the rule can be
                         # re-checked without building the oracle.
+tools/degcmp.py <spv> <livecheck-out> [simp-dump]
+                        # THE TWO INTERFERENCE GRAPHS BY DEGREE.  The
+                        # compiler's graph does not have to be dumped:
+                        # notes/52's edge rule means the `liveset` trace
+                        # contains it.  With the simp dump it pairs the
+                        # records as recnum does.  This read notes/114 §26.
+tools/ifgdump.py <spv> <out>            # the `ifg` trace compacted (only
+                        # the last rows per vreg): gigabytes -> megabytes.
+                        # G2S_VREGAT=<addr> in the hook narrows the record
+                        # dump to one patched site.
 tools/recnum.py <spv> <simp-dump>       # the compiler's record NUMBERING
                         # against ours, paired by (first def, last use, mask)
 tools/waredge.py <spv>  # scores a candidate anti-dependence order against
@@ -360,13 +370,12 @@ sweeps (`parcheck.sh`, `parvar.sh`) take an hour and are for diagnosis only.
 ```
 corpus  (120 listings)   exact 120 prefix-only 0    DIFFERS 0  failed 0
                          120351 of 120351 lines (100.0%)
-probes  (642 listings)    exact 642 prefix-only 0    DIFFERS 0  failed 0
+probes  (650 listings)    exact 650 prefix-only 0    DIFFERS 0  failed 0
                          57020 of 57020 lines (100.0%)
 slice   (1,400 modules)  exact 962 prefix-only 438  DIFFERS 0  failed 0
 full    (14,630 modules) the sweep of notes/114: 14,000 clean, and the
-                         tail is 289 DIFFERS
-                         out of the 630 newest listings, nearly all of them
-                         a register difference on an identical line
+                         tail is 2 DIFFERS out of the 630 newest
+                         listings (SS29, SS30 and SS31 in)
 ```
 
 (notes/111: storage images end to end -- STOREIM, LOADIM in every measured
@@ -376,7 +385,7 @@ archive, `probes.7z` (probes/ and listings/); nothing from the corpus is in
 the package, see SETUP.md.)
 
 (notes/114: the full-corpus sweep (14,630 modules, the oracle's own listings
-for all of them) -- TWENTY-FOUR causes so far, each read from a trace.  The
+for all of them) -- TWENTY-EIGHT causes so far, each read from a trace.  The
 scheduler's: the condition records' place in the R live array (§5), a static
 load's node and record made AT ITS READER (§6), the component an
 anti-dependence is made for -- the one its writer is the LAST to write (§8),
@@ -396,14 +405,23 @@ reads the name (§19), the construct's lane-x load renamed by the
 statement's flush (§22, it was being dropped as dead and the lane with it),
 a NEGATED whole read of a merged local reading the merge, like the bare
 and swizzled reads beside it (§23 -- the modifier is the operand slot's, not
-part of the name), and a per-vertex input ARRAY whose first index is the
-vertex, not a component (§24).
+part of the name), a per-vertex input ARRAY whose first index is the
+vertex, not a component (§24), a `KIL` that is a node of its block rather
+than a barrier of its own (§25, read from `g2s_st` and visible in no
+listing), and -- the one the tail was mostly made of -- a CUBE sample
+reading THREE components of its coordinate, where reading all four left the
+`.w` live from the program's entry and meeting every temp in the graph
+(§26, 253 of the 289 differing shaders).
 Every one has an off-switch named in the note and a probe of its own.
 
-What is LEFT is the tail: of the 630 newest listings 210 are exact and 289
-differ, and all but about a dozen of those 289 are THE SAME LINE WITH A
-DIFFERENT REGISTER -- the allocator, not the lowering and not the order.
-The other 14,000 modules sweep clean (DIFFERS 0 in all fourteen chunks).  `tools/p2check.py` runs
+What is LEFT is the tail: of the 36 listings that still differed after
+SS28, 34 are exact and 2 differ (99.6% of their lines against 74.0%): only
+`particle_fog_block_init.comp` is left, and only for the order its lines
+come out in WITHIN the blocks -- its instruction count (325) and register
+count (34) are the compiler's.  notes/114 says what is ruled out and what
+instrument the rest needs.  The other 14,000 modules sweep clean, and a 500-shader
+set drawn at random from them is the fast regression each change is checked
+against (`reg500.stems`, DIFFERS 0).  `tools/p2check.py` runs
 our pass 2 on the compiler's OWN blocks (its stamps, its `entry[68]`, its
 edges) and every block of every shader tried passes, so the selector is
 exonerated; `tools/recnum.py` now agrees with the compiler's record

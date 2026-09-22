@@ -1745,6 +1745,36 @@ void g2s_dump_vregs(cpu_t *cpu, unsigned long addr)
         return;
     if (!g2s_want("vregs"))
         return;
+    /* G2S_VREGAT -- dump only at ONE hook address.  `g2s_dump_vregs` is
+     * patched onto nineteen functions and walks every record's whole
+     * neighbour list at each, which on a corpus shader of a few thousand
+     * records is gigabytes and an hour of wall clock; the graph question
+     * only ever wants the dump at the allocator's own step.  Given as hex
+     * (`G2S_VREGAT=710003b310`), with or without `0x`; a comma-separated
+     * list is allowed. */
+    {
+        const char *at = getenv("G2S_VREGAT");
+        if (at && *at) {
+            char want[32];
+            int found = 0;
+            const char *p2;
+            snprintf(want, sizeof want, "%lx", addr);
+            for (p2 = at; *p2; ) {
+                const char *e2 = strchr(p2, ',');
+                size_t l2 = e2 ? (size_t)(e2 - p2) : strlen(p2);
+                if (l2 > 2 && p2[0] == '0' && (p2[1] == 'x' || p2[1] == 'X')) {
+                    p2 += 2; l2 -= 2;
+                }
+                if (l2 == strlen(want) && !memcmp(p2, want, l2))
+                    found = 1;
+                if (!e2)
+                    break;
+                p2 = e2 + 1;
+            }
+            if (!found)
+                return;
+        }
+    }
     /* The program is reached differently from each step -- `[X0]+8` for
      * f_710003bb10, X1 for f_710003ba20 -- so try the candidates and take the
      * first that looks like a program (a sane vreg count and a record array). */
@@ -3592,8 +3622,18 @@ void g2s_trace_stamps(cpu_t *cpu, unsigned long addr)
                 if (node && !(node & 7)) {
                     if (g2s_try_u64(node + 8, &w))
                         fprintf(stderr, " op=%#llx", w & 0xffffffff);
-                    if (g2s_try_u64(node + 32, &w))
+                    if (g2s_try_u64(node + 32, &w)) {
                         fprintf(stderr, " seq=%llu", w >> 32);
+                        /* ... and the COMPARATOR's primary key beside it:
+                         * pass 1 picks by node[32], then node[36] (the seq
+                         * above, the same u64's high word), then
+                         * entry[52] (notes/31, notes/49 SS"The comparator").
+                         * `tools/p1check.py` needs all three. */
+                        fprintf(stderr, " w32=%llu", w & 0xffffffff);
+                    }
+                    if (g2s_try_u64(node + 24, &w))
+                        fprintf(stderr, " h28=%llu h30=%llu",
+                                (w >> 32) & 0xffff, (w >> 48) & 0xffff);
                     if (g2s_try_u64(node + 48, &w))
                         fprintf(stderr, " mask=%#llx", w & 0xffffffff);
                     if (!g2s_try_u64(node + 136, &ent))
@@ -5856,6 +5896,147 @@ void g2s_trace_blkrec(cpu_t *cpu, unsigned long addr)
     if (w[5] && !(w[5] & 7))
         fprintf(stderr, " r40op=%#x", (unsigned)g2s_u32at(w[5] + 8));
     fputc('\n', stderr);
+}
+
+/* g2s_trace_entries -- THE BLOCK'S LIVE-ENTRY LIST, `block[80]`.
+ *
+ * notes/51 SS1 and SS2.1: `f_710003bb10` walks the chain to park each entry's
+ * per-component values in the allocator record, and `f_710004a2e0` seeds
+ * the ready list by walking the SAME chain -- that walk is pass 1's entry
+ * order, which `py/sched.py` `_order_entries` models and notes/68 SS4 reads
+ * as "the names the block stores, in the order the statement walker stored
+ * them".  Nothing printed it before: `gsum`'s `row=` is a slot that gets
+ * REUSED (row 515 carries a MUL at seq 19 and a MOV at seq 9 in
+ * `particle_fog_block_init.comp`), so the order could not be read off it.
+ *
+ * Hooked at 0x4a3a4, the loop's INITIALISER, where X19 is still the block
+ * (the generated `L_710004a3a4` reads `[x19 + 0x50]` there -- GST_I64(168)
+ * with GUEST_OFF_X0 = 16).  So the whole
+ * chain prints once per block, in walk order, before the loop consumes it.
+ *
+ *   g2s_entries blk=<x19>
+ *   g2s_entry <i> e=<e> sym=<e[16]> vreg=<sym[80]> node=<e[32]>
+ *             op=<node[8]> seq=<node[36]> e52=<e[52]> e68=<e[68]>
+ */
+void g2s_trace_entries(cpu_t *cpu, unsigned long addr);
+void g2s_trace_entries(cpu_t *cpu, unsigned long addr)
+{
+    unsigned long long blk, e = 0, sym, node;
+    int n = 0;
+
+    if (g2s_trace_budget == -2) {
+        const char *ev = getenv("G2S_TRACE");
+        g2s_trace_budget = (!ev || !*ev) ? 0 : -1;
+    }
+    if (g2s_trace_budget == 0 || !g2s_want("entries"))
+        return;
+    (void)addr;
+    blk = GST_I64(GUEST_OFF_X0 + 8 * 19);
+    if (!blk || (blk & 7))
+        return;
+    /* ... and the TERMINATOR, which 0x4a45c pushes last and hands to the
+     * loop as the pick to take first (notes/51 SS2.2): `block[88]`, its
+     * `[32]`, stepped through `[192]` when that node's op is 1. */
+    {
+        unsigned long long t = 0, tn = 0;
+        g2s_try_u64(blk + 88, &t);
+        if (t && !(t & 7) && g2s_try_u64(t + 32, &tn) && tn && !(tn & 7)
+                && g2s_u32at(tn + 8) == 1)
+            g2s_try_u64(tn + 192, &tn);
+        fprintf(stderr, "g2s_entries blk=%#llx term=%#llx\n", blk, tn);
+    }
+    if (!g2s_try_u64(blk + 80, &e))
+        return;
+    while (e && !(e & 7) && n < 4096) {
+        sym = node = 0;
+        g2s_try_u64(e + 16, &sym);
+        g2s_try_u64(e + 32, &node);
+        fprintf(stderr, "g2s_entry %d e=%#llx sym=%#llx vreg=%u node=%#llx",
+                n, e, sym,
+                (sym && !(sym & 7)) ? (unsigned)g2s_u32at(sym + 80) : 0u,
+                node);
+        if (node && !(node & 7))
+            fprintf(stderr, " op=%#x seq=%u",
+                    (unsigned)g2s_u32at(node + 8),
+                    (unsigned)g2s_u32at(node + 36));
+        fprintf(stderr, " e52=%#x e68=%#x",
+                (unsigned)g2s_u32at(e + 52), (unsigned)g2s_u32at(e + 68));
+        /* ... and the store's OPERANDS, which is what the walk releases for
+         * a root node (notes/51 SS2.1 at 0x4a3fc, and the reading of
+         * `f_7100049940`: the slots are `*(node + 40*i + 192)` and the
+         * count is the byte at `node + 153`). */
+        if (node && !(node & 7)) {
+            unsigned long long w = 0;
+            unsigned cnt = 0, i;
+            if (g2s_try_u64(node + 152, &w))
+                cnt = (unsigned)((w >> 8) & 0xff);
+            if (cnt > 8)
+                cnt = 8;
+            for (i = 0; i < cnt; ++i) {
+                unsigned long long sl = 0;
+                g2s_try_u64(node + 40 * (unsigned long long)i + 192, &sl);
+                fprintf(stderr, " s%u=%#llx/%u", i, sl,
+                        (unsigned)g2s_u32at(node + 40 * (unsigned long long)i
+                                            + 184));
+            }
+        }
+        fputc('\n', stderr);
+        ++n;
+        if (!g2s_try_u64(e, &e))
+            break;
+    }
+}
+
+/* g2s_trace_pick1 -- PASS 1'S COMPARATOR, `f_710004b930`, and the ready
+ * list it scans.  notes/31 and notes/49 read the key as node[32], then
+ * node[36], then entry[52], with a separate arm when node[28]/node[30] do
+ * not match the running best's -- but the fields read 0 in
+ * `g2s_trace_stamps`, which runs before the scheduling loop, so the rule
+ * could not be checked against data.  This prints them WHERE THE
+ * COMPARATOR SEES THEM: the list is X2[16], chained through entry[0], and
+ * the node is entry[8] (notes/51 SS2.3).
+ *
+ *   g2s_pick1 n=<count>
+ *   g2s_cand <i> e=<entry> node=<node> op=<..> w28=.. w30=.. w32=..
+ *            w36=<seq> e52=<entry[52]> e68=<entry[68]>
+ */
+void g2s_trace_pick1(cpu_t *cpu, unsigned long addr);
+void g2s_trace_pick1(cpu_t *cpu, unsigned long addr)
+{
+    unsigned long long wl, e = 0, node, w;
+    int n = 0;
+
+    if (g2s_trace_budget == -2) {
+        const char *ev = getenv("G2S_TRACE");
+        g2s_trace_budget = (!ev || !*ev) ? 0 : -1;
+    }
+    if (g2s_trace_budget == 0 || !g2s_want("pick1"))
+        return;
+    (void)addr;
+    wl = GST_I64(GUEST_OFF_X0 + 8 * 2);
+    if (!wl || (wl & 7) || !g2s_try_u64(wl + 16, &e))
+        return;
+    fprintf(stderr, "g2s_pick1\n");
+    while (e && !(e & 7) && n < 4096) {
+        node = 0;
+        g2s_try_u64(e + 8, &node);
+        fprintf(stderr, "g2s_cand %d e=%#llx node=%#llx", n, e, node);
+        if (node && !(node & 7)) {
+            if (g2s_try_u64(node + 8, &w))
+                fprintf(stderr, " op=%#llx", w & 0xffffffff);
+            if (g2s_try_u64(node + 24, &w))
+                fprintf(stderr, " w28=%llu w30=%llu",
+                        (w >> 32) & 0xffff, (w >> 48) & 0xffff);
+            if (g2s_try_u64(node + 32, &w))
+                fprintf(stderr, " w32=%llu w36=%llu",
+                        w & 0xffffffff, w >> 32);
+        }
+        fprintf(stderr, " e52=%#x e68=%#x\n",
+                (unsigned)g2s_u32at(e + 52), (unsigned)g2s_u32at(e + 68));
+        ++n;
+        if (!g2s_try_u64(e, &e))
+            break;
+    }
 }
 
 /* g2s_trace_asgn -- f_7100f0c4e0, the statement walker's store of a value

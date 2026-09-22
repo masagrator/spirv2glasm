@@ -390,6 +390,16 @@ def parse(line):
         srcs = [srcs[2], srcs[0], srcs[1], srcs[3]]
     tex2d = (base == "TEX" and srcs and srcs[-1].strip() == "2D"
              and not _os.environ.get("G2S_TEXWHOLE"))
+    # A CUBE SAMPLE READS THREE COMPONENTS of its coordinate, for the same
+    # reason a 2D one reads two (notes/87): reading all four leaves the
+    # coordinate's `.w` live from the program's entry, never written, and it
+    # then meets EVERY temp in the graph.  `tools/degcmp.py` on
+    # `water_11af45ac.frag`: the coordinate of `TEX.F #2208, #2205,
+    # handle(D35.x), CUBE;` has degree 2206 for us and 31 for the compiler,
+    # and every other record's degree is exactly one higher than the
+    # compiler's because of it.  `G2S_CUBEWHOLE=1` reads all four.
+    texcube = (base == "TEX" and srcs and srcs[-1].strip() == "CUBE"
+               and not _os.environ.get("G2S_CUBEWHOLE"))
     txl2d = (base == "TXL" and srcs and srcs[-1].strip() == "2D"
              and not _os.environ.get("G2S_TXLWHOLE"))
     if base == "STB":
@@ -455,6 +465,8 @@ def parse(line):
         nm, mk = _split(s)
         if tex2d and "handle(" not in s and s is not srcs[-1]:
             mk = _texture_2d_mask(s, mk)
+        elif texcube and "handle(" not in s and s is not srcs[-1]:
+            mk = _texture_2d_lanes(s, mk, (0, 1, 2))
         elif txl2d and "handle(" not in s and s is not srcs[-1]:
             mk = _texture_2d_lanes(s, mk, _TXL_2D_LANES)
         if _lmem_name(nm) is not None:
@@ -543,12 +555,42 @@ def edges(items, passthru=frozenset(), with_made=False):
     components, which is what "live" means here.
     """
     g = _EdgeBuilder(items, passthru)
+    # THE MEMORY ORDER IS IN PASS 2'S GRAPH TOO (notes/114 §33).  The same
+    # edges `_memory_pairs` gives pass 1's release walk are in the compiler's
+    # `graph2` as ordinary kind-0 successors -- on
+    # `particle_fog_block_init.comp`'s first block its graph is LD0..LD7 ->
+    # ST8 -> ST9 -> ST10 -> ST11 -> LD12..LD15, exactly the rule.  Without
+    # them pass 2 is free to hoist a load above the stores it must follow,
+    # which is what it did: two of that block's four loads came out directly
+    # after the first store instead of after the fourth.
+    # NO CUT HANDLING IS NEEDED: `_pass2` counts only predecessors inside
+    # the block it is running over, so an edge that spans a cut is ignored.
+    _mem_prev, _mem_since = None, []
+    _mem_edges = {}
+    if not _os.environ.get("G2S_NOMEMORDER"):
+        for i, it in enumerate(items):
+            if it is None:
+                continue
+            fam = it[0].split(".")[0]
+            if fam in _MEM_LOAD:
+                if _mem_prev is not None:
+                    _mem_edges.setdefault(i, []).append(_mem_prev)
+                _mem_since.append(i)
+            elif fam in _MEM_STORE:
+                if _mem_prev is not None:
+                    _mem_edges.setdefault(i, []).append(_mem_prev)
+                _mem_edges.setdefault(i, []).extend(_mem_since)
+                _mem_prev, _mem_since = i, []
     for i, it in enumerate(items):
         if it is None:
             continue
         _mnem, (dst, dmask), srcs = it
         for name, smask in srcs:
             g.read_after_write(i, name, smask)
+        # AFTER THE SLOT LOOP, as 0x49a24 adds them: the reader's own kind-0
+        # key, so they sort with the edges its sources made.
+        for _j in _mem_edges.get(i, ()):
+            g.add(_j, i, (0, i))
         for _xn, _xm in _extra_defs(it):
             g.write_after_read(i, _xn, _xm)
             g.write_after_write(i, _xn, _xm)
@@ -1053,6 +1095,63 @@ def _live_reads(items, span, groups=None, passthru=frozenset()):
     return pairs
 
 
+_MEM_LOAD = frozenset(("LDB", "LDC"))
+_MEM_STORE = frozenset(("STB",))
+
+
+def _memory_pairs(items, span):
+    """THE MEMORY ORDER (notes/114 \u00a733), the second half of `node[120]`'s
+    implicit-read chain.  Buffer accesses are ordered against each other
+    inside their block:
+
+        a buffer LOAD implicitly reads the block's most recent buffer STORE;
+        a buffer STORE implicitly reads the block's most recent buffer STORE
+        AND every buffer load since it;
+        nothing orders two loads against each other.
+
+    That is WAW + WAR + RAW and no RAR, and the `most recent store` chain is
+    why the transitive edges are absent: the compiler emits exactly these and
+    no more.  READ off the compiler's own `irr=` lists, not off a listing:
+    over 638 traces it reproduces 3444 of the 3446 edges between 0x3b/0x3c
+    nodes, edge for edge, including every irregular case -- the first store
+    of a block reading EIGHT preceding loads, a block's first store reading
+    nothing, and a store reading both the previous store and the one load
+    between them.
+
+    IT IS NOT ALIAS-AWARE.  Every load in the shader that forced this out
+    reads `sbo_buf0` and every store writes `sbo_buf1`, so the two can never
+    collide, and the compiler orders them anyway.  It does not partition by
+    the value type `node[44]` either: `st_f.comp` has an `LDC.F32X4` (type 6)
+    released by an `STB.U32` (type 12).
+
+    IMAGE STORES ARE NOT IN IT: `STOREIM` is op 0x2c, not 0x3c, and carries
+    no such edge in any of `hl_a`, `hl_b`, `hl_c`, `si_a`, `si_b`.  That is
+    read, not assumed.
+
+    `G2S_NOMEMORDER=1` drops the edges."""
+    if _os.environ.get("G2S_NOMEMORDER"):
+        return []
+    pairs = []
+    prev_store = None
+    since = []
+    for i in span:
+        it = items[i]
+        if it is None:
+            continue
+        fam = it[0].split(".")[0]
+        if fam in _MEM_LOAD:
+            if prev_store is not None:
+                pairs.append((prev_store, i))
+            since.append(i)
+        elif fam in _MEM_STORE:
+            if prev_store is not None:
+                pairs.append((prev_store, i))
+            pairs.extend((j, i) for j in since)
+            prev_store = i
+            since = []
+    return pairs
+
+
 def _implicit_read_pairs(groups, passthru, items=None):
     """THE IMPLICIT READS (0x49b88, notes/51 "The implicit reads"): a
     register read of a name at block entry is FOLDED into one reader, its
@@ -1144,6 +1243,16 @@ def _vreg_entries(items, span):
         if it is None:
             continue
         v = it[1][0]
+        # A BUFFER STORE IS ITS OWN ENTRY (notes/114 \u00a734).  Every other
+        # vreg appears in `block[80]` exactly once; the buffer symbol appears
+        # ONCE PER STORE -- four times in each of
+        # `particle_fog_block_init.comp`'s four-store blocks and eight times
+        # in its eight-store one -- so the stores are not one entry that
+        # collects them.  Keyed apart, each takes its own place in the walk,
+        # which is where the compiler decrements it.
+        if (not _os.environ.get("G2S_NOSTOREENTRY")
+                and it[0].split(".")[0] in _MEM_STORE):
+            v = ("store", i)
         if v not in by_v:
             by_v[v] = []
             order_v.append(v)
@@ -1224,6 +1333,7 @@ def _pass1(items, span, seq, passthru=frozenset(), band=None):
     groups = {}
     pairs = _live_reads(items, span, groups, passthru)
     pairs.extend(_implicit_read_pairs(groups, passthru, items))
+    pairs.extend(_memory_pairs(items, span))
     order_v, by_v = _vreg_entries(items, span)
     _order_entries(order_v, by_v, span, band)
     picked = _release_walk(span, pairs, order_v, by_v)
@@ -1564,8 +1674,15 @@ _NOWAROWN = bool(_os.environ.get("G2S_NOWAROWN"))
 # the structure words themselves, are FIXED: the compiler's blocks end at
 # them, and the scheduler never moves anything across them.  Each run of
 # ordinary lines between two such lines is scheduled on its own.
-_BARRIER_WORDS = ("REP", "ENDREP", "IF", "ELSE", "ENDIF", "BRK", "CONT",
-                  "KIL", "EMIT", "ENDPRIM", "RET", "CAL")
+_BARRIER_WORDS = (("REP", "ENDREP", "IF", "ELSE", "ENDIF", "BRK", "CONT",
+                   "KIL", "EMIT", "ENDPRIM", "RET", "CAL")
+                  if _os.environ.get("G2S_KILBARRIER") else
+                  # A `KIL` IS A NODE OF ITS BLOCK, not a barrier of its own
+                  # (notes/114 SS25): the compiler's block holds the `.CC`
+                  # move and the `KIL` together and ENDS at the `KIL`, so
+                  # the lowering cuts after it instead.
+                  ("REP", "ENDREP", "IF", "ELSE", "ENDIF", "BRK", "CONT",
+                   "EMIT", "ENDPRIM", "RET", "CAL"))
 
 
 def _is_barrier(line):
