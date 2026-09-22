@@ -1186,6 +1186,17 @@ class ArithOps(object):
                 "a bitcast whose MOV or mask the image's rules do not give")
         self._computation()
         dst = self._fresh(True)
+        # A COMPONENT OF A CONSTRUCT MADE IN THIS BLOCK is read from its
+        # source here too -- the same reading `_vector_bitcast` already
+        # makes for each of its scalarised components (`_con_lane`,
+        # `cx_a.frag`).  `particle_fog_block_init.comp`: the compiler
+        # prints `MOV.S Rn.x, Rm;` from the lane's own register where we
+        # printed the construct's lane.  `G2S_NOBITCASTCON=1` reads it.
+        _cl = (self._con_lane(self.values.get(src_id),
+                              self.comps.get(src_id, _IDENTITY)[0])
+               if _nres == 1 and not ENV.get("G2S_NOBITCASTCON") else None)
+        if _cl is not None:
+            a = _cl.split(".")[0]
         self.lines.append(_emit(_mv, dst + _ds, a))
         self.values[ins.result] = dst
         return True

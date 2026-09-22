@@ -61,6 +61,25 @@ def _modified(text):
     return text.startswith("-") or text.startswith("|")
 
 
+_IMAGE_RESULT_OPS = frozenset((
+    Op.OpImageSampleImplicitLod, Op.OpImageSampleExplicitLod,
+    Op.OpImageFetch, Op.OpImageSampleDrefImplicitLod,
+    Op.OpImageSampleProjImplicitLod, Op.OpImageSampleProjExplicitLod,
+    Op.OpImageSampleDrefExplicitLod, Op.OpImageRead, Op.OpImageGather))
+
+
+def _selects_an_image(module, ins):
+    """Does this shuffle select from an IMAGE OP's result?
+
+    An image op is not a node of the emit list (notes/111, and
+    `tools/nodedump.py` prints `<no node record>` against every `TEX`/`TXL`
+    line), so a selection of one has no node to be a selector ON: the store
+    has to materialise it.  A selection of anything else does have one.
+    """
+    src = module.result_insn.get(ins.args()[0]) if ins.args() else None
+    return src is not None and src.opcode in _IMAGE_RESULT_OPS
+
+
 class StoreOps(object):
 
     def _arm_store(self, ins):
@@ -933,6 +952,23 @@ class StoreOps(object):
             _grp = None
         if _grp is not None:
             self.ties.append(_grp)
+        # A SELECTION MATERIALISED BY THE STORE: the store's line is the
+        # value's FIRST node, so it is a lowering vreg and the LOCAL is its
+        # name.  WHETHER is `_is_statement_temp_store`'s question, asked of
+        # the value as for any other store; only WHAT IS FLUSHED differs --
+        # the local, not the source (`post_monotone.frag`: the compiler's
+        # vr 23 is the gather and vr 4 the name, both at `node[36]` 18).
+        _vsh = self.module.result_insn.get(val)
+        if (_vsh is not None and _vsh.opcode == Op.OpVectorShuffle
+                and _here and self.defline.get(val) is not None
+                and _is_placeholder(_reg) and _reg not in self.merged
+                and self._is_statement_temp_store(val, v, selection=True)
+                and _selects_an_image(self.module, _vsh)
+                and not ENV.get("G2S_NOSELNAME")):
+            self.stmtpos[_reg] = self.defline[val]
+            self.flush_q.append((_reg, _mv, _ds, _grp, self.defline[val],
+                                 _reg, "selection"))
+            return
         if self._is_statement_temp_store(val, v):
             # THE TEMP'S OWN STORE, flushed when the block closes (notes/67
             # §7): after the statements and the branch's `.CC` move, in the
@@ -958,7 +994,7 @@ class StoreOps(object):
                 return
         self.ties.append([_fl, len(self.lines) - 1])
 
-    def _is_statement_temp_store(self, val, v):
+    def _is_statement_temp_store(self, val, v, selection=False):
         """Is the stored value a temp of THIS statement, with a store of its
         own to flush?
 
@@ -986,8 +1022,9 @@ class StoreOps(object):
                 and v not in self.merged
                 and val not in self.arm_names
                 and _is_placeholder(v)
-                and not (_vx is not None and _vx.opcode
-                         in (Op.OpVectorShuffle, Op.OpCompositeExtract))
+                and (selection or not (_vx is not None and _vx.opcode
+                                       in (Op.OpVectorShuffle,
+                                           Op.OpCompositeExtract)))
                 # a component load selects too (`sq_b.frag`: the store of
                 # `u_xlat1.x` reads the MUL, and only the MUL is flushed)
                 and not (val in self.comp_load
@@ -1597,9 +1634,38 @@ class StoreOps(object):
             self._flush()
             if len(self.lines) > _n0 and len(more) > 1:
                 self.cuts.append(len(self.lines))
-            self.lines.extend(more[1:])
+            self._extend_position(more[1:], comp,
+                                  start=len(self.lines))
         else:
+            self._extend_position(more, comp)
+
+    def _extend_position(self, more, comp, start=None):
+        """ONE ELEMENT PER BLOCK.  `_position_whole`'s own reading -- "each
+        element's statement is in a block of its own and makes its own
+        scratch node" (notes/82) -- was modelled by the separate scratch
+        registers alone; the BOUNDARY was only opened after `.x`, and then
+        only when a temp had to be flushed there.  The compiler opens one
+        at every element: `ui_depth_alpha_v.vert`, `tools/gsum.py`, blocks
+        9, 10, 11 and 12 carry `result.position.x`, `.y`, `.z` and `.w`,
+        one apiece, with each element's scratch move beside its own store.
+        `G2S_NOPOSELEMBLK=1` keeps them in one block."""
+        if comp is None or comp >= 0 or ENV.get("G2S_NOPOSELEMBLK"):
             self.lines.extend(more)
+            return
+        _start = start      # where the current element's statement begins
+        for _l in more:
+            _isp = _l.startswith("MOV.F result.position.")
+            if _isp and not _l.startswith("MOV.F result.position.x,"):
+                # ... at its FIRST line, which is the scratch move, or the
+                # re-load ahead of it when the value is a block load
+                # (`pl_e.vert`: `LDC.F32X2 R0.y, buf0[16];` opens `.y`'s
+                # block, not the `MOV.F R0.x, R0.y;` after it)
+                _at = _start if _start is not None else len(self.lines)
+                if _at > 0 and self.cuts[-1:] != [_at]:
+                    self.cuts.append(_at)
+            self.lines.append(_l)
+            if _isp:
+                _start = len(self.lines)
 
     def _position_whole(self, val, const, src):
         """`gl_Position = v`: one element per block.

@@ -883,6 +883,18 @@ class Finish(object):
         self.store_movs[:] = [_new[k] for k in self.store_movs if k in _new]
         for _nm in list(self.stmtpos):
             self.stmtpos[_nm] = _at(self.stmtpos[_nm])
+        # ... AND THE CONSTRUCT STATEMENTS' LINE INDICES (notes/114 §27).
+        # `con_lane_load` is keyed by the lane-x LOAD's line and
+        # `con_stmt`/`lane_load_line` hold lines too; they were left
+        # unmapped, so on any shader where a line was dropped the lane-x
+        # load's tie was made for the wrong line -- or not at all.
+        if not ENV.get("G2S_NODROPCON"):
+            self.con_lane_load = dict(
+                (_at(_k), _v) for _k, _v in self.con_lane_load.items())
+            self.con_stmt = [(_t, _at(int(_s)) + (_s - int(_s)))
+                             for _t, _s in self.con_stmt]
+            self.lane_load_line = dict(
+                (_k, _at(_v)) for _k, _v in self.lane_load_line.items())
 
     def _label_subroutines(self):
         """A SUBROUTINE'S LABEL IS ITS FIRST BLOCK'S NUMBER (notes/68): the
