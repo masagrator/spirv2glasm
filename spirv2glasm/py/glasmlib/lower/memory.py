@@ -307,7 +307,19 @@ class MemoryOps(object):
                 "a component of a dynamically indexed block vector: not "
                 "measured")
         _lhit = self.ldc_same.get(_lkey)
-        if _lhit is not None and _lhit[0] == self._bkey():
+        # THE INTERNING IS FOR A STATIC LOCATION.  notes/75's "one node per
+        # location per block" is read from STATIC loads, and a dynamically
+        # indexed one is made again: `chr_cloth_421b91dc.frag` loads
+        # `sbo_buf15[i + 76]` twice in one block and the compiler prints two
+        # `LDB.U32` lines with two SEPARATE address computations -- seven
+        # loads there, seven `MUL.S R?.x, fragment.attrib[4], {128,..}` and
+        # seven `MOV.S`, one apiece -- and its 13 dynamic `OpLoad`s become
+        # 13 listing loads, so nothing is shared.  That is the same shape
+        # `particle_fog_block_init.comp` already needs, where every buffer
+        # access recomputes its own index.
+        # `G2S_DYNLOADSHARE=1` restores the refusal this replaced.
+        if (_lhit is not None and _lhit[0] == self._bkey()
+                and (_dyn is None or ENV.get("G2S_DYNLOADSHARE"))):
             self._load_buffer_again(ins, _lhit, _dyn, _bcomp)
         elif _dyn is None:
             self._load_buffer_static(ins, chain, _lkey, _lds)

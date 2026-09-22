@@ -126,7 +126,7 @@ class Core(object):
         "_arm_matrix_times_vector", "_arm_negating_multiply",
         "_arm_arithmetic",
         "_arm_sampled_image", "_arm_image", "_arm_image_op",
-        "_arm_image_write", "_arm_image_read",
+        "_arm_image_write", "_arm_image_read", "_arm_image_query",
         "_arm_extract", "_arm_construct",
         "_arm_derivative", "_arm_dot", "_arm_int_binary",
         "_arm_bitfield_insert", "_arm_any", "_arm_logical",
@@ -613,6 +613,7 @@ class Core(object):
                     _want |= 1 << "xyzw".index(_c)
                 _all = ENV.get("G2S_SELALLREADS")
                 _n = 0
+                _plain = False
                 for _k2 in range(_from, len(lines)):
                     _p2 = _sched.parse(lines[_k2])
                     if _p2 is None:
@@ -621,6 +622,28 @@ class Core(object):
                            and (_all or (_m2 or 0) & _want == _want)
                            for _s, _m2 in _p2[2]):
                         _n += 1
+                        # AND ONE OF THEM MUST BE A PLAIN COPY.  Over 1,751
+                        # modules this arm fires 352 times and reaches the
+                        # >= 2 threshold EIGHT times.  The one firing in an
+                        # exact module has readers `MOV.F #5.xyz, #4` and
+                        # `MIN.F #6.xyz, #4, {1,1,1,0}` -- a plain copy and
+                        # an arithmetic use -- and the compiler makes the
+                        # node.  The seven in modules that DIFFER are
+                        # `(-MOV.F, ADD.F32)` five times and `(DP3.F32,
+                        # MUL.F32)` twice; none has a plain copy, and the
+                        # compiler folds, where we printed a `MOV.F R?.xyz,
+                        # R?;` it does not have.  The other 344 firings are
+                        # below the threshold and unaffected either way.
+                        # `G2S_SELNOPLAIN=1` drops this test.
+                        if (lines[_k2].split()[0].split(".")[0] == "MOV"
+                                and ("-" + _nm) not in lines[_k2]
+                                and ("|" + _nm) not in lines[_k2]):
+                            _plain = True
+                if not (_plain or ENV.get("G2S_SELNOPLAIN")):
+                    # no reader takes the value as a value: the selection IS
+                    # the name and there is no copy
+                    self.stmtpos.pop(_nm, None)
+                    continue
                 if _n < 2:
                     self.stmtpos.pop(_nm, None)
                     continue

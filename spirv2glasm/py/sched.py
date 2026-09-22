@@ -544,6 +544,53 @@ def _merge_partner(items, j):
     return None
 
 
+def _passthru_masks(items):
+    """{line: the components a whole store merely PASSES THROUGH}.
+
+    A flush that stores a value back into the name it was built from changes
+    only the lanes the value replaced.  `chr_cloth_11fc2b75.frag`:
+
+        MOV.F #406.xyz, #3;      the value takes the name's own .xyz
+        MOV.F #406.w, #405.x;    and replaces .w
+        MOV.F #3, #406;          stored back -- so only .w changes
+
+    The compiler reads `#3.xyz` from BEFORE that store and is then free to
+    schedule the store last, which is the order its pass 1 produces and ours
+    does not.  This is notes/114 §16 and §7 one shape further out: there the
+    stored value was a whole copy of ANOTHER local, here it is built from the
+    local being stored to.
+
+    Read off the items, which already carry it -- no new channel from the
+    lowering.  `G2S_NOPTMASK=1` turns it off.
+    """
+    if _os.environ.get("G2S_NOPTMASK"):
+        return {}
+    out = {}
+    for i, it in enumerate(items):
+        if it is None:
+            continue
+        _m, (dst, dmask), srcs = it
+        if not dst or len(srcs) != 1 or dmask != 0xF:
+            continue
+        src, smask = srcs[0]
+        if smask != 0xF or not _lex.is_numbered(src, "#"):
+            continue
+        mask = 0
+        for j in range(i - 1, -1, -1):
+            jt = items[j]
+            if jt is None:
+                continue
+            _m2, (d2, m2), s2 = jt
+            if d2 == src and len(s2) == 1 and s2[0][0] == dst \
+                    and s2[0][1] == m2:
+                mask |= m2
+            elif d2 == src or d2 == dst:
+                break
+        if mask and mask != 0xF:
+            out[i] = mask
+    return out
+
+
 def edges(items, passthru=frozenset(), with_made=False):
     """Def-use and anti-dependence edges, by the rule at 0x4ac2c.
 
@@ -555,6 +602,7 @@ def edges(items, passthru=frozenset(), with_made=False):
     components, which is what "live" means here.
     """
     g = _EdgeBuilder(items, passthru)
+    _ptm = _passthru_masks(items)
     # THE MEMORY ORDER IS IN PASS 2'S GRAPH TOO (notes/114 §33).  The same
     # edges `_memory_pairs` gives pass 1's release walk are in the compiler's
     # `graph2` as ordinary kind-0 successors -- on
@@ -596,8 +644,9 @@ def edges(items, passthru=frozenset(), with_made=False):
             g.write_after_write(i, _xn, _xm)
         if not dst:
             continue
-        g.write_after_read(i, dst, dmask)
-        g.write_after_write(i, dst, dmask)
+        _dm = dmask & ~_ptm.get(i, 0)
+        g.write_after_read(i, dst, _dm)
+        g.write_after_write(i, dst, _dm)
     if with_made:
         return g.finish() + (g.made,)
     return g.finish()
@@ -1038,6 +1087,7 @@ def _live_reads(items, span, groups=None, passthru=frozenset()):
     pairs = []
     defs = {}
     ptdefs = {}                     # name -> [(mask, line)] live pass-throughs
+    _ptm = _passthru_masks(items)   # components a whole store passes through
     for i in span:
         it = items[i]
         if it is None:
@@ -1084,6 +1134,7 @@ def _live_reads(items, span, groups=None, passthru=frozenset()):
         if groups is not None and dst.startswith("#"):
             # every WRITE of the name: each walks its lanes' reader lists
             groups.setdefault(("writers", dst), []).append(i)
+        dmask = dmask & ~_ptm.get(i, 0)
         kept = [(m & ~dmask, j) for m, j in defs.get(dst, ())]
         ptkept = [(m & ~dmask, j) for m, j in ptdefs.get(dst, ())]
         ptdefs[dst] = [(m, j) for m, j in ptkept if m]

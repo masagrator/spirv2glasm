@@ -17,23 +17,31 @@ raising* rather than by emitting something plausible — see `NotEstablished` in
 Python side does not claim.  Current figures (notes/114 and after):
 
 ```
-probes       (650)        exact 650   prefix-only 0     DIFFERS 0  failed 0
+probes       (654)        exact 654   prefix-only 0     DIFFERS 0  failed 0
 corpus sample (120)       exact 120   prefix-only 0     DIFFERS 0  failed 0
 slice        (1,400)      exact 962   prefix-only 438   DIFFERS 0  failed 0
                           1,093,657 of 1,848,903 listing lines (59.2%)
 full corpus  (14,630)     exact 10,179  prefix-only 4,451  DIFFERS 0  failed 0
-                          12,917,944 of 20,496,042 listing lines (63.0%)
+                          12,917,944 of 20,496,042 lines (63.0%)
+                          -- MEASURED BEFORE SS36..SS40, so it is the last
+                          full sweep and not the current state
+sample       (1,500)      exact 1,461   prefix-only 14     DIFFERS 25
+                          -- the current state, on the current tree
 ```
 
-`DIFFERS` IS NOW 0 EVERYWHERE, the full corpus included: no module in the
-14,630 produces a line that disagrees with the oracle's.  What is left is
-not wrongness but SILENCE -- 4,451 modules stop early, cleanly, where the
-converter does not yet claim to know the next line, and that is what the
-63.0% of lines measures.  notes/114 is the running list of the differences
-that were closed to get here -- thirty-five causes read and fixed, each with
-an off-switch and a probe (§33, the memory order, is pinned by
-`tools/memcheck.py` against the compiler's own edges as well, since it is
-checked over 66,096 of them), plus the candidates that were read and DROPPED because they
+`DIFFERS` WAS 0 EVERYWHERE at the last full sweep, and IS NOT NOW.  That is
+not a regression: SS36 to SS38 removed the three commonest REFUSALS, and a
+module that used to stop after its declarations now emits its whole body --
+where it meets whatever the refusal had been hiding.  On a 1,500-module
+sample prefix-only fell from 71-in-200 to 14-in-1,500 and DIFFERS rose from
+0 to 25, of which SS39 and SS40 have since closed 11.
+
+The 25 are TWO families, both narrowed to a mechanism and neither guessed
+at (notes/114 "Still open"): 18 modules missing one scalar copy, where a
+spelling that makes all 18 instruction-exact is refuted by its own probe,
+and 8 where the compiler gives two copies of one expression the same
+`node[36]` stamp.  notes/114 is the running list of what was read to get
+here -- forty causes, each with an off-switch and a probe -- plus the candidates that were read and DROPPED because they
 contradicted an already-measured rule.  What is left in that tail is the
 ALLOCATOR: `tools/p2check.py` runs our pass 2 on the compiler's own blocks
 and it reproduces the compiler's order everywhere it has been tried, and
