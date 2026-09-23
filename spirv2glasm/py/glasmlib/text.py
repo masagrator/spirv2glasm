@@ -13,7 +13,7 @@ def _swizzle(text, comp):
     """One component of a source operand.
 
     Component 0 prints with NO suffix -- `MOV.F R0.x, vertex.attrib[0];` is
-    the `.x` read in `p06_swizzle.vert` -- and the rest print `.y`, `.z`,
+    the `.x` read in `0053_p06_swizzle.vert` -- and the rest print `.y`, `.z`,
     `.w`.  That asymmetry is the printer's: the swizzle is emitted one
     character at a time from `"xyzw"` and an all-`x` swizzle is omitted
     (notes/23).
@@ -53,10 +53,10 @@ def _swizzle_suffix(sel, nres):
     if nres and tuple(sel[:nres]) == tuple(range(nres)):
         return ""
     # THE LANES PAST THE SELECTOR KEEP THEIR OWN COMPONENT (the identity):
-    # `mb_n26.vert`'s vec3 `u_xlat0.zxy * u_xlat3.yzx` prints
+    # `0078_mb_n26.vert`'s vec3 `u_xlat0.zxy * u_xlat3.yzx` prints
     # `R11.zxyw, R10.yzxw`, where repeating would give `.zxyz`.
     # (A ONE-component selector is a scalar's, broadcast: `.x`.)
-    # (notes/90: a TWO-component `.xz` prints `.xzzw` -- `bv_n40.vert`'s
+    # (notes/90: a TWO-component `.xz` prints `.xzzw` -- `0000_bv_n40.vert`'s
     # `MUL.F32 R0.xy, R39.xzzw, R1;` -- so two components pad with the
     # identity too; `G2S_REPEAT2=1` restores the repeat.)
     if (len(sel) not in (2, 3) or len(set(sel)) == 1
@@ -121,7 +121,7 @@ def _position_store(src, is_constant, comps=(0, 1, 2, 3), scratch=None,
     """The instruction lines for `gl_Position = src`, and the registers used.
 
     `comps` is the source component each destination component takes, so a
-    swizzled store -- `gl_Position = a0.wzyx` in `p06_swizzle.vert` -- is the
+    swizzled store -- `gl_Position = a0.wzyx` in `0053_p06_swizzle.vert` -- is the
     same lowering with a different mapping.
 
     PROVENANCE (notes/44): this shape is the image's, not a listing's.  The
@@ -144,12 +144,12 @@ def _position_store(src, is_constant, comps=(0, 1, 2, 3), scratch=None,
         for c in _COMPONENTS[1:]:
             lines.append("MOV.F result.position.%s, %s.x;" % (c, src))
         return lines, None
-    # The scratch is the SOURCE's own register when it has one: `p05_ubo.vert`
+    # The scratch is the SOURCE's own register when it has one: `0005_p05_ubo.vert`
     # writes `MOV.F R0.x, R0.y;` -- overwriting `.x` of the very register it
     # is reading `.y` from, which is safe because each component is read
     # before the next is written.  A source with no register gets one.
     # A SCALAR source needs ONE scratch copy, not three: every destination
-    # component reads the same value, so `op_dot.vert` copies `R0` into
+    # component reads the same value, so `0011_op_dot.vert` copies `R0` into
     # `R0.x` once and then writes `.y`, `.z` and `.w` from it.
     if len(set(comps)) == 1:
         if isinstance(scratch, (list, tuple)):

@@ -37,7 +37,21 @@ def lower(module, entry_name="main"):
     """
     c = getattr(module, "_g2s_body", None)
     if c is None:
-        c = Lowering(module, entry_name).run()
+        # TWO PASSES, and only when the first one finds the case (notes/114
+        # §41).  A static load that is loaded AGAIN IN ITS OWN BLOCK keeps
+        # its register and the construct that read it first copies out of
+        # it.  Whether the repeat lands in the same block cannot be known
+        # at the first load -- a store between them opens a new block and
+        # then the compiler simply loads twice -- so the first pass finds
+        # out and the second acts on it.  The lowering is deterministic, so
+        # the answer carries; it is recorded against the SPIR-V id of the
+        # first load, which a second pass numbers the same way, and not
+        # against a register name, which it does not.
+        _first = Lowering(module, entry_name)
+        c = _first.run()
+        if _first.shared_first:
+            c = Lowering(module, entry_name,
+                         shared_before=_first.shared_first).run()
         try:
             module._g2s_body = c
         except AttributeError:

@@ -1,68 +1,163 @@
 # Progress report
 
-**notes/114: the full corpus, module by module.**  The oracle's listings are
-generated for ALL 14,630 now, and 14,000 of them are compared and clean.
-Twenty-eight causes so far: a family edge is pushed at the head like every
-other; a scalar lane of a construct stored whole to an output reads the
-lane's source; a load retargeted into a local is forwarded as the local's
-register; a swizzle of lanes a merge's pair passed through keeps the name;
-the CONDITION records are members of the R class's live array (no edge, no
-register, but a slot); a static load's record is numbered AT ITS READER, two
-under one reader in the reader's operand order; a plain copy is transparent
-to a later read of a lane stored from it; an anti-dependence is made for the
-component its writer is the LAST to write, so a write that a later write
-covers again drops behind the writers that keep one; a handle pair's two
-loads are stamped after their OR, in its operand order; negative zero keeps
-its sign; a merge chain is ordered at the reader's OWN line, not pass 1's; a
-value read through a selector has no self-move; a constant goes straight
-into a position lane; a scalar interface operand is a whole scalar value, so
-it goes straight to the lane; a construct statement is a group whatever its
-size, so the loads its operands lower to are stamped after it even when it
-writes a single lane; a whole copy of a local is transparent PER COMPONENT,
-so the copy's reads take what the source's components were stored from; a
-SHUFFLE of a construct reads the lanes' sources, as every other reader of
-one does; a SELECT's result stored to an output has no self-move, because
-the arms store it; a PREDICATED select's arm takes the value forwarded from
-the local's store, where the branch form's arms are blocks of their own and
-read the name; a predicated write reads its OWN DESTINATION LAST, after the
-value it writes; a copy's component whose source was stored in an EARLIER
-BLOCK reads the source's register, which is what the copy's own line reads;
-and a construct's LANE-X LOAD writes the construct's register, so the
-statement temp's flush renames that load's line too -- it was being left
-behind, written to a register nothing read, and dropped as dead with the
-lane it carried; and a NEGATED whole read of a merged local reads the MERGE,
-like the bare read and the swizzled read beside it -- the negation is the
-operand SLOT's modifier (notes/47), not part of the name, and the
-whole-read arm of `_merge_forward`'s rewrite was the only one that did not
-accept it; a PER-VERTEX INPUT ARRAY's first index is the VERTEX, not a
-component -- `v[1]` prints `vertex[1].attrib[0]` where we printed a swizzle
-of `vertex.attrib[0]`; a `KIL` is a NODE OF ITS BLOCK and not a barrier of
-its own, which changes no listing and is here because it is what the
-compiler's blocks are (`g2s_st`) and because the graph join could not be
-made to work without it; and a CUBE SAMPLE READS THREE COMPONENTS of its
-coordinate, as a 2D one reads two (notes/87) -- reading all four left the
-coordinate's `.w` live from the program's entry, never written, meeting
-EVERY temp in the graph.  One more is a BUG of ours rather than a rule
-(§27): `_drop_lines` renumbers every line index the lowering records, and
-the three maps the construct statements use (§15, §22) were added after it
-and never joined the list, so on any shader where a line was dropped the
-lane-x load's tie was made for the wrong line.  And a SELECTION OF AN IMAGE
-RESULT that a local's store materialises is a node of its own (§28): an
-image op is not a node of the emit list at all, so the selection has nothing
-to be a selector on -- and it is a node of its own only when its value has
-TWO readers in the block, which is `_flush`'s own reading.  Three earlier
-spellings of that one were written and dropped, each costing probes; the
-first was reached for because a probe failed, which is fitting, and the note
-records it as that.
+**PREFIX-ONLY IS 0.**  Every module of the 14,630-shader corpus converts to
+the end.  The refusal census (notes/114 §78) found 60 that stopped early, in
+21 distinct causes; notes/115..130 close every one.
+
+```
+probes      (680)     exact 680     prefix-only 0  DIFFERS   0  failed 0
+regression  (500)     exact 500     prefix-only 0  DIFFERS   0  failed 0
+FULL CORPUS (14,630)  exact 14,208  prefix-only 0  DIFFERS 422  failed 0
+the 60 that once      exact 13      prefix-only 0  DIFFERS  47  failed 0
+   refused
+```
+
+The full-corpus row is the sweep that finished 2026-09-23 (`tools/fullcmp.py`,
+resumable; the tsv is in the scratchpad).  **97.1% of the corpus is byte-exact
+and nothing stops early or fails.**  The 422 are the whole of the remaining
+work and have not yet been split by kind -- `tools/diffkind.py --tsv` is the
+tool for that, and the census of 164 of them said 137 were the `map_*` family
+in the RENAME class, which is the register allocator's visiting order.
+
+Re-measured 2026-09-23: the 60 give 15,918 of 46,419 listing lines (34.3%),
+the probes 59,053 of 59,053 (100%) and the 120-shader corpus sample 120,351
+of 120,351 (100%).
+
+What remains is DIFFERS -- our line against the compiler's -- and most of it
+is the register allocator.  `PYTHON-STATUS.md` has the breakdown; the
+sections below are the history, newest first.
+
+## The reference became one row per opcode, and the vocabulary got measured
+
+No converter code changed here -- the rule is differs-to-0 before new
+capability -- but the reference the converter is designed against did.
+
+**Attribution.**  `f_7100bd74f0` prints the texture and memory lines itself
+and carried only the return-address hook, so every `TEX`, `LDC` and `ATOMB`
+line joined as `<no node record>` and no texture opcode had any evidence at
+all.  With `g2s_trace_node` on it too, `tools/opcodemap.py` files every
+printed line under the `node[8]` that printed it.  GLASM-REFERENCE.md is now
+ONE ROW PER OPCODE NUMBER with a `why this number` column (notes/134).
+
+What that column can now say, from measurement rather than from the spec:
+
+* the second texture block is the OFFSET forms (`textureOffset` -> `0x19f`,
+  `texture` -> `0xbc`), and TXD is the exception that keeps one number;
+* `0xb2`/`0xb6`/`0x1a7`/`0x1a9` are the THREE-SOURCE forms, where a
+  cube-array coordinate fills four lanes and the bias, LOD or compare becomes
+  its own operand;
+* `.LODCLAMP` is its own number (`0x1ab`, `0x1ac`, `0x1ad`, `0x1ae`, `0x205`),
+  reached through `GL_ARB_sparse_texture_clamp`;
+* `0x1ec..0x1f3` are `ATOMS.{ADD,MIN,MAX,AND,OR,XOR,EXCH,CSWAP}` -- eight
+  opcodes the namer does not name and the printer does;
+* `SHL`/`SHR` disagree with the IR map and the disagreement is RECORDED, not
+  resolved.
+
+**Six modules instead of 866.**  `opcov/cover/cover.{vert,tesc,tese,geom,
+frag,comp}.spvasm` print every opcode number the full sweep printed plus
+twelve more; `tools/covercheck.py` prints the shortfall (0).  Rebuilding the
+evidence is a minute, not half an hour.
+
+**The spec-sourced claims got tested** (`opcov/vocab/RESULTS.md`, one row per
+idea INCLUDING the negatives).  Sixteen texture target keywords replace the
+guessed list; the condition codes the compiler actually prints are `TR`,
+`NE`, `NE1`, `NONRESIDENT` and -- only in the footprint lowering -- the
+`SINGLELOD` its own assembler rejects.  `QSWZ0..3/X/Y`, `FSIB`/`FSIE` and
+`CALI` (a whole subroutine sub-language) were read through the GLSL front
+end, which accepts shaders the SPIR-V one refuses.  `ATOM.*`, `LDCB`,
+`ATTRRD`/`ATTRWR`, `MATCH.*`, `PK4B`, `LRP`, `RFL`, `NRM` and `SSG` were
+tried and do NOT come out -- the compiler open-codes them.  **Named only**
+fell from 109 rows to 86.
+
+**Two more crashers and a compiler bug.**  A storage-buffer atomic in the
+VERTEX stage segfaults where a plain store from the same stage is refused
+cleanly; `OpAtomicLoad` through a `Block`+`Uniform` pointer segfaults where
+`spirv-val` accepts it.  And the footprint family emits nine well-formed
+instructions that the compiler's OWN ASSEMBLER refuses (`unknown opcode
+modifier`) -- an emitter that outruns its assembler, like the `AND.F` case.
+
+## The last cause: the merge pass-through register (notes/129)
+
+The final prefix-only shaders did not refuse for want of a rule.  The
+scheduler could not PLACE their bodies: three edges that are each right on
+their own closed a cycle round the merge pair.
+
+    (130,131) RAW     131 reads the merge
+    (131,134) WAR     131 reads #53 at entry, 134 writes #53.x
+    (134,130) kind-2  134 reads #194.w at entry, 130 writes #194.xyw
+
+FOUR ATTEMPTS AT THE VREG IDENTITY WERE ALL REFUTED, at 436, 605, 432 and
+639 of 679 probes; every one is removed from the tree and written up in
+notes/129 §3 and §4, because a refuted attempt rules something out.  The
+lesson is in HANDOVER §5: **when four attempts in a row regress the probes,
+the model is right and the TRIGGER is wrong.**
+
+The fix is two guards in `_name_read_after_pair`, the function that already
+decides whether to split the merge's vreg and was declining to:
+
+* A PASSED-THROUGH LANE IS NOT A WRITTEN ONE.  The pass-through half of a
+  component store keeps the entry value, so a line in `self.passthru` must
+  not count as a store of that component when the trigger asks whether the
+  name was written.
+* The anti-dependence test has to follow the access chain: a store through a
+  component chain writes the CHAIN'S LOCAL, and the test was looking at the
+  chain's result instead, so it never matched the reader that creates the
+  obligation.
+
+Neither changes a byte of any listing that was already right: 680/680
+probes, 500/500 on the regression set, and prefix-only 0 over the whole
+corpus.  notes/130 was written for the mechanism the code cited and no note
+held: per-vertex reads and writes at a DYNAMIC index.
+
+Two things about the lexer belong with this, because they cost more than the
+rule did: `BAR ;` did not LEX, and five shaders were blocked behind a
+refusal message that named the SCHEDULER.  A refusal message must name ONE
+condition, and when it names a mechanism, check that it IS the mechanism --
+three separate causes this campaign hid behind a message that named the
+wrong thing (HANDOVER §5).
+
+## The documentation pass that followed
+
+Every figure in every file was re-derived rather than re-typed, and what did
+not survive is recorded where it was wrong rather than deleted:
+
+* `FLAGS.md` is generated (`tools/mkflags.py`).  Its site scan matched on
+  the `ENV.get` call and so MISSED every switch whose call is split over two
+  lines -- `G2S_NOMERGENEG` was absent from the registry entirely.  It now
+  matches quoted flag names: 296 switches, 177 with no prose at their site.
+* `FLAGS.md` gained a last table: the switches the NOTES still name that the
+  code no longer has, and which `NO` form replaced each.  A note is a dated
+  record and keeps the switch it was measured with, so `G2S_LOCALREG=1` in
+  notes/53 is `G2S_NOLOCALREG=1` inverted today.
+* Twenty-three `notes/N §M` citations pointed at sections that do not exist
+  -- `notes/54 §9` and `§10` from five places, when notes/54 ends at §8 and
+  the reading is notes/52 §7 -- and notes/114 had TWO sections numbered 79.
+  All of them now resolve; the check is mechanical and worth re-running.
+* HANDOVER's "the number that matters" ranked the refusal causes by listing
+  lines.  That table is now EMPTY, because prefix-only is 0.  The METHOD
+  survives -- weight by lines, not by files -- and it moves to DIFFERS.
+* `notes/pending_probes/` held a `.glasm` whose source was not kept, so it
+  could never be re-measured.  It is labelled and a README says what the
+  folder is for; the rule is that the pair travels together.
+
+THE CENSUS THAT MADE THIS POSSIBLE, and the lesson in it: the prefix-only
+list in use before notes/114 §78 recorded 1,420 modules under 11 causes,
+1,223 of them under ONE string.  Every one of those had already closed
+itself as a side effect of other work, and the string turned out to name
+three different conditions in two functions.  Work was being aimed at the
+8-shader tail of a list whose head did not exist.  A census is evidence with
+a date; re-take it before choosing what to do next.
 
 Seventeen probes now isolate them, one per rule back to the anti-dependence
-component (`wr_a.frag`, `hp_a.frag`, `lz_a.frag`, `mc_a.frag`, `sm_a.frag`,
-`pc_k.vert`, `sf_a.frag`, `cs_b.frag`, `sl_a.frag`, `sv_e.frag`,
-`sv_d.frag`, `ct_a.frag`, `cg_a.frag`, `mn_a.frag`, `pv_a.tese`, `cu_d.frag`, `im_sel.frag`).  §25 has no probe and the note says why: with the rule on and
+component (`0114_wr_a.frag`, `0114_hp_a.frag`, `0114_lz_a.frag`, `0114_mc_a.frag`, `0114_sm_a.frag`,
+`0114_pc_k.vert`, `0114_sf_a.frag`, `0114_cs_b.frag`, `0114_sl_a.frag`, `0114_sv_e.frag`,
+`0114_sv_d.frag`, `0114_ct_a.frag`, `0114_cg_a.frag`, `0114_mn_a.frag`, `0114_pv_a.tese`, `0114_cu_d.frag`, `0114_im_sel.frag`).  §25 has no probe and the note says why: with the rule on and
 off every shader prints the same, so there is nothing for a probe to
 discriminate on -- the evidence is the compiler's block list.
-`notes/pending_probes/` holds one, `cc_a.frag`, which reduces the largest
-of the three families still open to 40 lines.  Every probe was checked to FAIL with its rule turned off; the
+`probes/0114_cc_a.frag` reduces the largest of the three families still
+open to 40 lines (it was in `notes/pending_probes/` when this was written
+and is in the gate now; what is left there is an OLDER spelling's listing,
+`notes/pending_probes/README.md`).  Every probe was checked to FAIL with its rule turned off; the
 ones that did not were rewritten until they did.
 
 `tools/degcmp.py` (new) is what read §26, and it is the instrument the
@@ -118,7 +213,7 @@ The colouring half is two shapes (`DIV.F32 R?.xy` and `MOV.F R?.x,
 fragment.position`), and reading it needs the compiler's live set at that
 position against ours.
 
-Probes 654/654, corpus sample 120/120, slice exact 962 / DIFFERS 0.  The
+Probes 656/656, corpus sample 120/120, slice exact 962 / DIFFERS 0.  The
 full-corpus regression sweep over all 14,630 modules is clean outside the
 tail: fourteen chunks of a thousand, DIFFERS 0 in every one.
 
@@ -193,7 +288,7 @@ introduced by notes/95's selects are gone; 25 older ones remain (notes/101
 
 **Before that (notes/100): vector selects on a bool splat; a retracted
 rule.**  sel_e..sel_i.  A temp-store rule narrowed until probes passed was
-fitting and is removed; `sel_e` stays refused.
+fitting and is removed; `0100_sel_e` stays refused.
 
 **Before that (notes/99): shadow samplers.**  sa_a..sa_d, ta_a.
 
@@ -237,7 +332,7 @@ Probes 294 of 296, corpus 55.
 **Before that (notes/89): structured-buffer addresses and identity folds.**
 Probes 279 of 281 exact, corpus 55, DIFFERS 0.
 
-**Before that (notes/88): gl_FrontFacing and hex immediates.**  `ff_a` exact;
+**Before that (notes/88): gl_FrontFacing and hex immediates.**  `0088_ff_a` exact;
 probes 267 of 269, corpus 55, DIFFERS 0.
 
 **Before that (notes/87): vector bitcasts, shifts, the dither prologue.**
@@ -256,8 +351,8 @@ merged in the same block reads the merge, which becomes a temp copied into
 the local, as the compiler's node dump shows.  Probes pb_a..pb_d are exact.
 check.sh: probes 240 of 243, DIFFERS 0; corpus DIFFERS 0.
 
-**Before that (notes/84): constant arrays in local memory.**  `lm_icb` and
-`lm_icbf` are exact.  Each element gets a MOV into a temp and a store into
+**Before that (notes/84): constant arrays in local memory.**  `0071_lm_icb` and
+`0071_lm_icbf` are exact.  Each element gets a MOV into a temp and a store into
 `lmem0[i]`.  The indexed load is a carrier plus `MOV.U R4, lmem0[R0.x].xyzw`.
 The scheduler treats `lmem<k>` as one name.  A colour store's self-move is
 renamed through `_flush`.  Probes: 236 of 239 exact, DIFFERS 0.  Corpus:
@@ -323,7 +418,7 @@ DIFFERS 0.
 * the vec3 swizzle fill;
 * output stores flush through `_flush`.
 
-`mb_n18`..`mb_n28` are exact.  New tool: `tools/ifgjoin.py`.  `check.sh`:
+`0077_mb_n18`..`0078_mb_n28` are exact.  New tool: `tools/ifgjoin.py`.  `check.sh`:
 probes 192 exact, DIFFERS 0; corpus DIFFERS 0.  Under `G2S_LIFTSTORE`,
 probes are 209 exact.
 
@@ -334,7 +429,7 @@ probes are 209 exact.
   name;
 * the implicit-read release order is last-first.
 
-Still open: the temps' record order and allocation in `mb_n18`
+Still open: the temps' record order and allocation in `0077_mb_n18`
 (`tools/vrjoin.py`, `G2S_WALKS`, `G2S_PICKTRACE` are the tools).
 `check.sh`: probes 192 exact, DIFFERS 0; corpus DIFFERS 0.
 
@@ -369,7 +464,7 @@ lines, 6 DIFFERS left).  `check.sh`: probes 184 exact, DIFFERS 0; corpus
 DIFFERS 0.
 
 **Before that (notes/73):** bisecting `chr_eye` with `probecut`.  Each rule was
-isolated in a small probe (`pt_a`..`pt_f`) and confirmed against the
+isolated in a small probe (`0073_pt_a`..`0073_pt_f`) and confirmed against the
 compiler's own blocks and edges with the new `tools/gsum.py`.
 
 * **A read covering a component store's written component** takes the
@@ -394,19 +489,19 @@ compiler's own blocks and edges with the new `tools/gsum.py`.
   self-move.
 * **Flush at the block close.** A temp still pending when a whole
   `gl_Position` store closes `.x`'s block is flushed inside that block
-  (`bc_sbo`).
+  (`0072_bc_sbo`).
 * **Loaded locals.** Every stored local that is loaded is materialised,
   whole or by component (the "stays forwarded" rule was wrong).
-* **`ce_head.vert` exact.** It is the head of a corpus shader.  Two fixes
+* **`0072_ce_head.vert` exact.** It is the head of a corpus shader.  Two fixes
   got it there: flush-renamed temps take their original record position,
   and the dynamic-index carrier has its own vreg.
 * **Construct components in their own block.** A one-component read of a
   construct in the same block reads that component's source
-  (`ce_head2`/`ce_head3`).
+  (`0072_ce_head2`/`0072_ce_head3`).
 * **Pending stores across any block.** A local store pending from any
   earlier block (not only an IF block) opens a block at the store
-  (`ce_head4`).
-* **`ce_n29.vert` exact** (the first 29 statements of `chr_eye`, cut with
+  (`0072_ce_head4`).
+* **`0072_ce_n29.vert` exact** (the first 29 statements of `chr_eye`, cut with
   the new `tools/probecut.py`).  It needed three things:
   * an unreferenced uniform block prints `BUFFER[-1]` and no CBUFFER line;
   * a whole load forwarded through a local keeps its head source;
@@ -454,29 +549,29 @@ interference graph (`tools/graphcheck.py`), the driver and its attempts
 band the old model measured turned out to be a rule: at `--opt-level none`
 every store is live out of its block at the mask it stores.  With the
 allocator on, the local assembled from parts is emitted by default and
-`lo_parts`, `lo_half` and `lo_over` are exact; their order needed the
+`0052_lo_parts`, `0053_lo_half` and `0053_lo_over` are exact; their order needed the
 compiler's implicit reads (0x49b88) in the scheduler's first pass.  And the
 block partition is read off the compiler's per-name `block[80]` lists: a
 block holds one store per name, which puts a second output's store into the
-last `gl_Position` element's block (`if_out`, `p04_out` exact).  Then
-`fr_mrt.frag` (notes/56): the colour outputs share register code 207, so the
+last `gl_Position` element's block (`0031_if_out`, `0031_p04_out` exact).  Then
+`0044_fr_mrt.frag` (notes/56): the colour outputs share register code 207, so the
 edge builder orders their stores like writes to one register.  Then
-`co_add1.vert` (notes/57): the converter now follows the compiler's
+`0052_co_add1.vert` (notes/57): the converter now follows the compiler's
 sequence -- pass 1, the allocator over pass 1's lists, pass 2 with its edges
 on the allocated registers, swept over pass 1's list and pushed at the head.
-Then `fr_ddx.frag` (notes/58): scalar `dFdx`/`dFdy`/`fwidth`, with fwidth as
+Then `0051_fr_ddx.frag` (notes/58): scalar `dFdx`/`dFdy`/`fwidth`, with fwidth as
 the front end's `abs(DDX) + abs(DDY)` and every result a stored name.
-Then `op_cross.vert` (notes/59): two swizzled MULs and an ADD.  Then
-`un_sqrt.vert` (notes/60): inversesqrt's family shape, a reciprocal per
-component, and a multiply by one.  Then `fr_texlod` and `fr_texfetch`
+Then `0052_op_cross.vert` (notes/59): two swizzled MULs and an ADD.  Then
+`0033_un_sqrt.vert` (notes/60): inversesqrt's family shape, a reciprocal per
+component, and a multiply by one.  Then `0033_fr_texlod` and `0033_fr_texfetch`
 (notes/61): the coordinate built as a construct with the lod in `.w`, and
 the image node releasing its handle before its coordinate.  Then all six
 `ts_eval_*.tese` (notes/62): the instruction printer's kind-0x35 arm decoded
 into `opname.PER_VERTEX_IN_35` names `vertex[0].position` and
-`vertex.tesscoord`.  Then `ts_ctrl.tesc` (notes/63): InvocationId, a
+`vertex.tesscoord`.  Then `0007_ts_ctrl.tesc` (notes/63): InvocationId, a
 dynamically indexed per-vertex read, the arrayed output store, the patch
-levels and their `#var` rows.  Then structured LOOPS (notes/64): `cf_while`,
-`cf_loop`, `p09_loop` -- REP/IF/ELSE-BRK/ENDREP, a control-flow-aware
+levels and their `#var` rows.  Then structured LOOPS (notes/64): `0046_cf_while`,
+`0029_cf_loop`, `0064_p09_loop` -- REP/IF/ELSE-BRK/ENDREP, a control-flow-aware
 scheduler, and a local counted as a name in the block rule.
 The loop head's constant test (`SEQ.U.CC HC.x ...; BRK`) and the branch
 condition's normalisation (`TRUNC.U` / `MOV.S x, -x`) are now READ, not
@@ -491,9 +586,9 @@ register-indexed `gl_in[i]` read, EMIT/ENDPRIM, and three reads that changed
 `py/sched.py`: the walker's block test (a name's store stays pending until
 the name is touched in a later block), the merge copy as the carrier of the
 implicit read, and the anti-dependences made in a backward sweep after the
-uses.  `g01.geom` (the same body) needed the geometry clip/cull semantic
+uses.  `0046_g01.geom` (the same body) needed the geometry clip/cull semantic
 column, `$vin.CLP0[0][49]`, from the same kind switch (notes/65 §6).
-Then `cf_switch.vert` (notes/66): cgc's switch lowering (`f_7100fb0a40`)
+Then `0046_cf_switch.vert` (notes/66): cgc's switch lowering (`f_7100fb0a40`)
 turns the switch into an IF chain -- `selector == literal` per case in body
 order, the default's body held back as the innermost else -- whose compare
 is used directly, so the normalising `MOV.S` takes the folded `.CC`
@@ -510,7 +605,7 @@ IF/ELSE into a temp, a temp's own store is flushed at block end into its
 own name, liveness follows the IF/ELSE edges, and a negate is a carrier
 MOV.  `lens_flare_ghost_tex.frag` now stops at its vec2 local's component
 store (notes/67 §9).
-Then `cf_call.vert` and three more call probes (notes/68): subroutines
+Then `0050_cf_call.vert` and three more call probes (notes/68): subroutines
 through CAL, the caller's copy into each `in` parameter, the callee's entry
 copy of it, the return name, the driver's extra RET, the label as the
 subroutine's first block number, liveness along the call edges, and pass
@@ -593,8 +688,8 @@ and all of it re-runnable:
   table places at a LABEL, which HANDOVER §3.1 says to do by hand.  196 of 199
   hooks install clean; the one real miss is recorded below;
 * the library: 53,748 objects, about 50 minutes on two cores, then the oracle.
-  `build/spirv2glasm --opt-level none probes/op_mul.vert.spv` is byte-identical
-  to `listings/op_mul.vert.glasm`, which is the check that the rebuilt machine
+  `build/spirv2glasm --opt-level none probes/0011_op_mul.vert.spv` is byte-identical
+  to `listings/0011_op_mul.vert.glasm`, which is the check that the rebuilt machine
   is the same machine;
 * the corpus: the 120 shaders that have a saved listing, through
   `corpus/mkcorpus.py` with glslang 15.1.0 -- 120 of 120, 0 rejected.
@@ -608,7 +703,7 @@ block by `f_710003bb10`'s walk over `program[184]`, and every node it
 schedules is linked into that one block's `block[32]`.
 
 Measured, with a new `g2s_trace_block` hook that dumps the emitter's input at
-its entry -- `if_out.vert`:
+its entry -- `0031_if_out.vert`:
 
 ```
 g2s_blk block=0x17cb29f8 list=0x17cb8ca0 own=0x17cb6750
@@ -631,7 +726,7 @@ to the OPERAND, and the arm it selects is a recursion: a node whose opcode is
 the release goes into its slots instead, following only those whose component
 mask overlaps.
 
-`op_pow.vert` is where it shows.  Its four component `MOV`s sit behind a
+`0018_op_pow.vert` is where it shows.  Its four component `MOV`s sit behind a
 three-node `0x57` merge chain, and the compiler's first ready list -- dumped
 with `g2s_trace_pick` -- holds the four `MOV`s in the chain's own depth-first
 order and not one node of the chain.  Modelling the store as releasing the
@@ -642,7 +737,7 @@ chain's head puts the chain on the list and gets the whole block wrong.
 notes/49 read `f_710004b930` as degenerating -- `node[32]` is zero on every
 node, so both arms end in TAKE and the scan keeps the list's TAIL.  Re-read
 here instruction by instruction, that is right, and `g2s_trace_pick` confirms
-it on every pick of `op_pow.vert`: the entry kept is the tail each time.  The
+it on every pick of `0018_op_pow.vert`: the entry kept is the tail each time.  The
 list being pushed at the head, the tail is the oldest ready entry.
 
 ## `tools/schedcheck.py`, rewritten and run
@@ -657,13 +752,13 @@ the compiler through `g2s_trace_block` so the ORDER is tested on its own.
 113 probes:  89 OK   24 MISMATCH
 ```
 
-and on `op_pow.vert` the PICK order it produces is the compiler's own, node
+and on `0018_op_pow.vert` the PICK order it produces is the compiler's own, node
 for node, against `g2s_trace_pick` / `g2s_trace_picked`.
 
 ## The 24, and the reading that explains them
 
 notes/49 said the second insertion wave "re-links the finished lists
-back-first".  That is wrong, and `op_pow.vert` is the counterexample: wave 2
+back-first".  That is wrong, and `0018_op_pow.vert` is the counterexample: wave 2
 is not wave 1 reversed, and the difference moves a line.
 
 `f_710004b220` is a **second schedule**.  Per block it moves `block[32]` aside
@@ -741,7 +836,7 @@ function has no indirect call in this tree, so `apply_hooks.py` reports
    explains the `POW` order.  With it, the order is reproducible end to end
    and `schedcheck` should go to 113.
 2. Then the allocator (notes/48), against `g2s_dump_graph`, with
-   `un_clamp.vert` as the smallest case that a last-use scan gets wrong.
+   `0048_un_clamp.vert` as the smallest case that a last-use scan gets wrong.
 3. Only then the node IR in `py/glasm.py`, the scheduler and the allocator on
    it, and after those the loads of locals, local stores and control flow --
    which is where 115k of the corpus's 120k lines are (`tools/census.py`).
@@ -859,7 +954,7 @@ order: **`f_710004ab80`'s `kind == 2` arm SWAPS producer and consumer**
 (0x4acd0), so the graph the second pass schedules is not the DAG but the DAG
 plus anti-dependences, and `f_710004b220` asks for exactly that (`w3 = 2`,
 0x4b5e8).  `g2s_trace_push` (new, on the decrement and both push sites) shows
-`un_sqrt.vert`'s first `0x47` node carrying `npred = 4` where the DAG gives it
+`0033_un_sqrt.vert`'s first `0x47` node carrying `npred = 4` where the DAG gives it
 one -- which is why the model releases it at clock 0 and the compiler at 128.
 
 A wrong reading was corrected on the way, and it is the kind that is easy to
@@ -891,7 +986,7 @@ for node.
 
 The graph is not the DAG, and that was the whole gap: `f_710004ab80`'s
 `kind == 2` arm swaps producer and consumer, so it carries anti-dependences,
-and `un_sqrt.vert`'s first `0x47` node has four predecessors where the DAG
+and `0033_un_sqrt.vert`'s first `0x47` node has four predecessors where the DAG
 gives it one.  A model built on the DAG released it at clock 0; the compiler
 releases it at 128.
 
@@ -918,8 +1013,8 @@ question -- the same one notes/48 leaves open for the allocator.
 The 26 corpus shaders of the 1,400-shader slice that differed are all exact
 (16598 of 16598 lines).  The last three were read with the traces, not
 fitted: the D registers are the allocator's class 4 (`g2s_simp` shows the
-driver run with `class=4`, K the handles' pressure); `lf_c` reproduced a
-lane's scratch MOV folding into a one-use reload; `sw_a` had pass 1 and the
+driver run with `class=4`, K the handles' pressure); `0104_lf_c` reproduced a
+lane's scratch MOV folding into a one-use reload; `0104_sw_a` had pass 1 and the
 selector exact and one pass-2 edge too many (colour outputs chain per
 component, `gsum`'s row-207 edges); `cl_a..g` measured which construct lanes
 gather.  Probes 418 of 424, corpus 56, DIFFERS 0.
@@ -930,17 +1025,17 @@ Two of the rules above were first taken from listings, and one of them was
 justified with the wrong function (the `.CC` fold of notes/64 §5).  They
 are now confirmed on the compiler's IR and DAG (`irtree`, `fold`, gdb):
 
-* an insert reads a scalar block load's node (`lf_c`, `lf_d`, and `lf_g`,
+* an insert reads a scalar block load's node (`0104_lf_c`, `0104_lf_d`, and `0104_lf_g`,
   whose earlier second reader the first version got wrong);
 * a constructor operand that is a vector swizzle (IR op 0x1c) gets a MOV
   of its own -- `f_7100f13850` (notes/44) -- and a scalar goes straight in;
 * a matrix part (`m[c].k`, `m[c]`; IR op 0x1d) is a fresh LDC and a MOV at
-  every read, made by `f_7100f10a30`'s case at 0x7100f117c0; `ld_mx` is no
+  every read, made by `f_7100f10a30`'s case at 0x7100f117c0; `0103_ld_mx` is no
   longer refused;
 * a store's only source node writes the destination: a matrix MOV (lane x,
-  whole local, whole output) and a block load (`mx_h`, `lx_b`).
+  whole local, whole output) and a block load (`0104_mx_h`, `0104_lx_b`).
 
-`ld_mx`, `mx_b..h`, `lx_a`, `lx_b`, `lf_g` new; probes 429 of 434, corpus
+`0103_ld_mx`, `mx_b..h`, `0104_lx_a`, `0104_lx_b`, `0104_lf_g` new; probes 429 of 434, corpus
 56, DIFFERS 0.  Still to read at the code: the pass that makes the
 constructor's MOVs after the construct's writes (their seqs 6..8 follow
 the writes' 4).

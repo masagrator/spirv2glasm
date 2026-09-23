@@ -9,14 +9,15 @@ walker's rule (notes/65 §4, `Core._second_store`).
 """
 import lex as _lex
 
-from spvnames import Op, ExecutionModel, StorageClass
+from spvnames import Op, ExecutionModel, StorageClass, Decoration, BuiltIn
 
 import sched as _sched
 import opchain as _opchain
 from glasmlib.common import NotEstablished, ENV, OP_NAME, ACCESS_CHAINS
 from glasmlib.types import BOOL_TYPE_CODE, _components, _glasm_type_code, \
     _pointee_components, _pointee_code, _vi_is_scalar
-from glasmlib.operands import _constant_operand
+from glasmlib.operands import _constant_operand, _constant_source, \
+    _scalar_value
 from glasmlib.chains import _output_chain, _output_operand, \
     _colour_output_name, _patch_level_chain, _position_chain, _buffer_chain
 from glasmlib.text import _COMPONENTS, _emit, _swizzle, _swizzle_suffix, \
@@ -98,6 +99,8 @@ class StoreOps(object):
         if ptr in self.reg_arrays:
             self._lmem_store(ptr, val, in_registers=True)
             return True
+        if self._lmem_element_store(ptr, val, const):
+            return True
         lc = _local_chain(self.module, ptr, self.by_result, self.locals_)
         if (lc is not None or ptr in self.locals_) and self._stale_ldc(val):
             raise NotEstablished(
@@ -110,7 +113,7 @@ class StoreOps(object):
         _n0 = len(self.lines)
         _bch = (None if ptr in self.locals_ or ENV.get("G2S_NOSTB")
                 else _buffer_chain(self.module, ptr, self.by_result))
-        if _bch is not None and _bch[0].startswith("LDB"):
+        if _bch is not None and _bch[0].startswith(("LDB", "LDS")):
             self._store_buffer(val, const, _bch)
             return True
         if ptr in self.locals_:
@@ -124,7 +127,7 @@ class StoreOps(object):
 
     def _store_buffer(self, val, const, chain):
         """A STORE INTO A STORAGE BUFFER is one `STB` with the load's
-        mnemonic and address (`st_a`..`st_e.comp`): `STB.U32 {5, 0, 0, 0},
+        mnemonic and address (`st_a`..`0000_st_e.comp`): `STB.U32 {5, 0, 0, 0},
         sbo_buf0[4];`, `STB.F32X4 R0, sbo_buf1[16];`, a dynamic index scaled
         and carried as a load's (`st_c`: `MUL.S`, `MOV.S`, `sbo_buf0[R0.x]`).
         The value prints bare, the register itself; a component other than
@@ -135,7 +138,7 @@ class StoreOps(object):
             raise NotEstablished("a store into one component of a storage "
                                  "buffer vector: not measured")
         self._computation()
-        smn = "STB" + mnem[3:]
+        smn = ("STS" if mnem.startswith("LDS") else "STB") + mnem[3:]
         _tc = _glasm_type_code(self.module, _tid)
         _mv = self._mov_for(_tc)
         _n = _components(self.module, _tid)
@@ -157,14 +160,14 @@ class StoreOps(object):
                         and _vi.opcode == Op.OpCompositeExtract)))):
                 # ... and ANY COMPONENT SELECT, lane x too (notes/111): a
                 # load through a chain that picks a vector's component is a
-                # MOV of its own (notes/104 §6) -- `cb_a.comp`'s
+                # MOV of its own (notes/104 §6) -- `0111_cb_a.comp`'s
                 # `gl_GlobalInvocationID.x` prints `MOV.U R0.x,
-                # invocation.globalid; STB.U32 R0, ..`, `cb_c.comp`'s `p.x`
+                # invocation.globalid; STB.U32 R0, ..`, `0111_cb_c.comp`'s `p.x`
                 # (a local) and `u.v.x` (a uniform) `MOV.F R1.x, R0;` and
                 # `MOV.F R1.x, R2;`, where the scalar `gl_LocalInvocationIndex`
                 # is stored bare
                 # A SELECTED COMPONENT is gathered into a scratch `.x` --
-                # a construct's lane from its source (`st_f.comp`'s
+                # a construct's lane from its source (`0109_st_f.comp`'s
                 # `floatBitsToUint(t).x`: `MOV.U R5.x, R0; STB.U32 R5, ..`,
                 # R0 the lane's MOV, vr 10 of its own)
                 _g = self._fresh()
@@ -184,7 +187,7 @@ class StoreOps(object):
             _ld = self.ldc_at.get(val) if const is None else None
             if _ld is not None and not ENV.get("G2S_STBLDCLATE"):
                 # the VALUE is lowered before the address: a block load it
-                # reads is made ahead of the index's scaling (`st_g.comp`'s
+                # reads is made ahead of the index's scaling (`0109_st_g.comp`'s
                 # `cb.v[k] = p`: `LDC.U32 R0.x, ..; LDC.F32X4 R1, ..; MUL.S
                 # R0.x, R0, {16, ..};`)
                 _tg = _sched.Tie([_ld[0]])
@@ -194,10 +197,116 @@ class StoreOps(object):
             addr = "%s[%s.x%s]" % (name, _t, " + %d" % off if off else "")
         self.lines.append("%s %s, %s;" % (smn, src, addr))
 
+    def _lmem_element_store(self, ptr, val, const):
+        """`a[i].c = v` into a local-memory array, at CONSTANT indices.
+
+        `post_irradiance_prefilter.frag` writes its `TempArray0` a component
+        at a time and the listing prints one MOV per component, the element
+        index in the brackets and the component as the write mask:
+
+            MOV.F lmem0[0].x, R0;
+            MOV.F lmem0[0].y, R0;
+
+        -- the same spelling `_lmem_store` uses for a whole element
+        (`MOV.U lmem0[3], {0, 0, 0, 4};`), with a mask on it.  Only the
+        constant-index form is written; a dynamic index here is a different
+        address shape and has no listing.  (notes/124 §1)
+        """
+        if ENV.get("G2S_NOLMEMELEM"):
+            return False
+        _ch = self.by_result.get(ptr)
+        if (_ch is None or _ch.opcode not in ACCESS_CHAINS
+                or _ch.args()[0] not in self.lmem_k):
+            return False
+        _var = _ch.args()[0]
+        _idx = _ch.args()[1:]
+        if not 1 <= len(_idx) <= 2:
+            raise NotEstablished(
+                "a local-memory chain of an unmeasured depth")
+        _ks = [_scalar_value(self.module, _i) for _i in _idx]
+        _ks = [int(_k) if _k is not None and str(_k).lstrip("-").isdigit()
+               else None for _k in _ks]
+        if any(_k is None for _k in _ks):
+            raise NotEstablished(
+                "a dynamically indexed local-memory element store: not "
+                "measured")
+        _at = self.module.types.get(
+            self.module.types.get(
+                self.module.globals[_var].result_type).operands[2])
+        _et = _at.args()[0]
+        _mv = self._mov_for(_glasm_type_code(self.module, _et))
+        if _mv is None:
+            raise NotEstablished(
+                "a local-memory element store whose MOV is not given")
+        src = const if const is not None else self.values.get(val)
+        if src is None:
+            raise NotEstablished(
+                "a local-memory element store whose value has no form")
+        self._computation()
+        _mask = "" if len(_ks) == 1 else ".%s" % _COMPONENTS[_ks[1]]
+        self.lines.append("%s lmem%d[%d]%s, %s;"
+                          % (_mv, self.lmem_k[_var], _ks[0], _mask, src))
+        self.lmem_elem.setdefault(_var, (_mv, 0))
+        return True
+
+    def _arm_atomic(self, ins):
+        """`OpAtomicIAdd` on a storage buffer: ONE `ATOMB.ADD` line, READ off
+        the corpus's eight atomic lines (notes/127 §1) --
+
+            ATOMB.ADD.U32 R3.x, {1, 0, 0, 0}, sbo_buf4[R3.x];
+            ATOMB.ADD.U32 R0.x, R2, sbo_buf1[0];
+
+        -- the destination a `.x` temp, then the ADDED VALUE, then the same
+        address the buffer store and load build (`_buffer_chain`, the
+        dynamic index scaled by `_dynamic_address`).  The type suffix is the
+        chain's own, as `STB` takes it.
+
+        The corpus also has one `ATOMS.ADD.U32 .., shared_mem[..]` -- the
+        SHARED-memory form.  It is not written here: the shaders that have
+        it refuse earlier, on a Workgroup variable's `#semantic`, so no
+        listing of ours reaches it and the spelling would be untested.
+        """
+        if ins.opcode != Op.OpAtomicIAdd or ENV.get("G2S_NOATOMIC"):
+            return False
+        _a = ins.args()
+        _chain = _buffer_chain(self.module, _a[0], self.by_result)
+        if _chain is None or not _chain[0].startswith(("LDB", "LDS")):
+            raise NotEstablished(
+                "an atomic add on something other than a storage buffer or "
+                "shared memory: only those forms are in a listing")
+        mnem, name, off, _tid, _dyn, _bcomp = _chain
+        if _bcomp is not None:
+            raise NotEstablished(
+                "an atomic add on one component of a storage-buffer vector: "
+                "not measured")
+        self._computation()
+        _nres = _components(self.module, ins.result_type)
+        _src = _constant_source(self.module, _a[3], _nres)
+        if _src is None:
+            _src = self.values.get(_a[3])
+        if _src is None or _modified(_src):
+            raise NotEstablished("an atomic add whose value has no form")
+        if _dyn is None:
+            addr = "%s[%d]" % (name, off)
+        else:
+            _dl = _dyn if isinstance(_dyn, list) else [_dyn]
+            _t, off, _np = self._dynamic_address(_chain, _dl)
+            addr = "%s[%s.x%s]" % (name, _t, " + %d" % off if off else "")
+        dst = self._fresh(True)
+        # SHARED MEMORY TAKES `ATOMS`, the buffer `ATOMB`:
+        # `post_tonemap_histogram.comp` has
+        #     ATOMS.ADD.U32 R3.x, {1, 0, 0, 0}, shared_mem[R3.x];
+        # beside the buffer form's `ATOMB.ADD.U32 .., sbo_buf4[..]`.
+        self.lines.append("%s.ADD%s %s.x, %s, %s;"
+                          % ("ATOMS" if mnem.startswith("LDS") else "ATOMB",
+                             mnem[3:], dst, _src, addr))
+        self.values[ins.result] = dst
+        return True
+
     def _mark_store_movs(self, n0, dst):
         """THE MOVs A WHOLE STORE MAKES are not nodes yet when the one-lane
         read pass runs (glasmlib/replicate.py): the DAG holds the store (op
-        0x3a), which the pass skips, and its MOV comes later -- `ps_c.frag`'s
+        0x3a), which the pass skips, and its MOV comes later -- `0087_ps_c.frag`'s
         `MOV.F result_color0, R2;` and the temp's `MOV.F R2, R2;` both read
         a MUL of `R0.x` by `attrib.x` at the full selector (gdb on
         f_7100069f90's visits: the MUL, then the two 0x3a stores).  The MOVs
@@ -214,8 +323,8 @@ class StoreOps(object):
 
     def _is_self_copy(self, ptr, val):
         """A COMPONENT STORED STRAIGHT BACK -- `u_xlat0.x = u_xlat0.x;`, HLSLcc
-        writes these -- is no statement at all: `ss_a.frag` (the local stored
-        whole in the block) and `ss_b.frag` (stored before an IF) print
+        writes these -- is no statement at all: `0102_ss_a.frag` (the local stored
+        whole in the block) and `0102_ss_b.frag` (stored before an IF) print
         nothing for it, and the next read still takes what it took before
         (`ss_a`'s clamp reads the MUL).  The value must be a load of the SAME
         component with no store in between.  `G2S_SELFCOPY=1` stores it."""
@@ -226,7 +335,7 @@ class StoreOps(object):
         if (lc is None and _wl is not None and _wl == (ptr, self.store_no)
                 and not ENV.get("G2S_NOWHOLESELFCOPY")):
             # A WHOLE LOCAL STORED STRAIGHT BACK -- `u_xlat3 = u_xlat3;`,
-            # a load and a store of it -- prints nothing either: `ss_d.frag`
+            # a load and a store of it -- prints nothing either: `0000_ss_d.frag`
             # (the slice's `map_226cebcd`, `MIN.F R3.xy, R7, ..` straight
             # after the pair)
             return True
@@ -234,7 +343,7 @@ class StoreOps(object):
         if _cl is None and not ENV.get("G2S_NOSHUFSELFCOPY"):
             # ... AND SO IS ONE THROUGH A SHUFFLE of the whole load: HLSLcc's
             # `u_xlat11.xy = u_xlat11.xy;` is a load, a `.xy` shuffle and two
-            # extract stores, and `ss_c.frag` (the corpus's
+            # extract stores, and `0108_ss_c.frag` (the corpus's
             # `chr_hair_f0ad47e1` and nine more) prints nothing for them
             _cl = self._shuffle_lane_of_load(val)
         if _cl is None or _cl[1] != self.store_no:
@@ -263,11 +372,11 @@ class StoreOps(object):
         """The `node[36]` the position's `.x` store carries when it reads a
         local's lane FORWARDED from a plain lane-x store in this block (the
         lane IS the stored value's node, `cfw_kind` "node"): that node's own
-        -- `sp_a.vert` (`t.x = dot(a0, a1); gl_Position = t.xxxx;`) prints
+        -- `0109_sp_a.vert` (`t.x = dot(a0, a1); gl_Position = t.xxxx;`) prints
         the DP4, `result.position.x`, `t`'s store and the self-move all at
         seq 3, pass 1's list ordering them (`tools/nodedump.py`); so does
-        `sb_c.vert`'s `u_xlat3.x` (seq 45).  A merge's lane is a node of its
-        own (`pt_a.vert`: DP4 23, the insert 24, `result.position.x` 25)."""
+        `0109_sb_c.vert`'s `u_xlat3.x` (seq 45).  A merge's lane is a node of its
+        own (`0073_pt_a.vert`: DP4 23, the insert 24, `result.position.x` 25)."""
         if ENV.get("G2S_NOPOSNODESEQ"):
             return None
         _ins = self.module.result_insn.get(val)
@@ -331,7 +440,7 @@ class StoreOps(object):
 
         PENDING FROM AN EARLIER BLOCK: the walker's test is on the NAME's
         record, which a component store sets as a whole store does (notes/72
-        §8).  `ce_n41.vert`'s `u_xlat3.y = dot(u_xlat4, u_xlat6)` --
+        §8).  `0073_ce_n41.vert`'s `u_xlat3.y = dot(u_xlat4, u_xlat6)` --
         `u_xlat3.x` stored in an earlier block, not read since -- has the DP4
         in one block and the pair `MOV.F R5.y, R0.x; MOV.F R5.xzw, R5;` in
         the next, with `result.position.x` (the compiler's blocks 22 and 23).
@@ -356,9 +465,9 @@ class StoreOps(object):
 
         THE DESTINATION decides the gather (notes/69), as for every
         single-component store: `.x` straight from any source component
-        (`lv_v2a.frag`: `MOV.F R0.x, fragment.attrib[0].z;`), `.y..w` through
-        a scratch `.x` (`lo_parts.vert`) ... but a SCALAR VALUE goes straight
-        in, as in a construct (`co_mul4`): `lv_cc.vert`'s `t.y = a + b`
+        (`0069_lv_v2a.frag`: `MOV.F R0.x, fragment.attrib[0].z;`), `.y..w` through
+        a scratch `.x` (`0052_lo_parts.vert`) ... but a SCALAR VALUE goes straight
+        in, as in a construct (`co_mul4`): `0072_lv_cc.vert`'s `t.y = a + b`
         prints `MOV.F R2.y, R0.x;` with no scratch ... a scalar the value's
         OWN instruction wrote: an extract or shuffle of a vector names a
         component of it and gathers through the scratch `.x`
@@ -373,7 +482,7 @@ class StoreOps(object):
                    and not (val in self.lname and v == self.lname[val][0]))
         # ... and so is a SCALAR local's name (notes/72 §5 says a VECTOR's
         # component gathers): the ternary's temp, read whole after the ENDIF
-        # -- the cut `mq_n8.frag`'s `hlslcc_movcTemp.y = (b.y) ? .. : ..`
+        # -- the cut `0091_mq_n8.frag`'s `hlslcc_movcTemp.y = (b.y) ? .. : ..`
         # prints `MOV.F R0.y, R1.x;` with no scratch
         if ((val in self.arm_names or val in self.load_of)
                 and _is_placeholder(v) and _vi_is_scalar(module, val)
@@ -401,13 +510,13 @@ class StoreOps(object):
         if _split_here and const is None:
             # THE STORE OPENED A BLOCK: a local it reads is read there, by
             # NAME -- the `OpLoad` before the store was forwarded from the
-            # old block's stores (`pk_d.vert`: `u.x = t.x` after `u = b`, t
+            # old block's stores (`0081_pk_d.vert`: `u.x = t.x` after `u = b`, t
             # stored in the block before: `MOV.F R3.x, R5;`, R5 = t)
             _nm = self._name_read(val)
             if _nm is not None:
                 v, _sc = _nm
                 # ... a VECTOR's component gathers, but a SCALAR local's
-                # name goes straight in, as above: `pg_d.frag`'s `u_xlat2.w =
+                # name goes straight in, as above: `0108_pg_d.frag`'s `u_xlat2.w =
                 # u_xlat10_20` (a float) in the block its store opened prints
                 # `MOV.F R2.w, R0.x;` (the corpus's `map_02077bd8`)
                 _direct = bool(
@@ -416,7 +525,7 @@ class StoreOps(object):
                     and not ENV.get("G2S_NOSCALARNAMEDIRECT"))
                 # ... and a read of the NAME from a later block restarts its
                 # record (notes/65 §4, `_touch_by_name`), so the local's next
-                # store does not open a block: `nr_a.frag`'s `u_xlat3.y =
+                # store does not open a block: `0106_nr_a.frag`'s `u_xlat3.y =
                 # u_xlat2.x` (a block of its own) reads `u_xlat2` by name,
                 # `MOV.F R0.x, R5;`, and the later `u_xlat2.x = c9.x * c15`
                 # shares its block and loads with `u_xlat2.z = ..` (one
@@ -431,7 +540,7 @@ class StoreOps(object):
             # wrote)
             # ... into ANOTHER lane the read stays a component select of the
             # construct and gathers through a scratch `.x`, as an output
-            # lane's does (`cr_f`): `cr_o.frag`'s `u_xlat1.w = u_xlat0.w`
+            # lane's does (`cr_f`): `0000_cr_o.frag`'s `u_xlat1.w = u_xlat0.w`
             # prints `MOV.F R8.x, R4; .. MOV.F R9.w, R8.x;`
             # (`map_2948729f`: `MOV.F R0.x, R9; .. MOV.F R28.w, R0.x;`)
             v, _sc = _crd.split(".")[0], 0
@@ -445,7 +554,7 @@ class StoreOps(object):
                 and not ENV.get("G2S_NOLDCLANEFOLD")):
             # A SCALAR BLOCK LOAD IS SUBSTITUTED INTO THE STORE (notes/67 §1,
             # notes/104 §4): the insert reads the load's node, a scalar, with
-            # no scratch -- the fold dumps of `lf_c.frag` (`u.w = s`: the
+            # no scratch -- the fold dumps of `0104_lf_c.frag` (`u.w = s`: the
             # 0x47 into lane w on the 0x3b itself, the clamp on the same
             # node) and `lf_d`/`lf_g` (another reader of `s`, before or
             # after: the same) -- `MOV.F R2.w, R3.x; MIN.F R0.x, R3, ..`
@@ -472,7 +581,7 @@ class StoreOps(object):
 
     def _component_mov(self, var):
         """THE LOCAL'S OWN TYPE names the MOVs: a bool vector's component
-        store is `MOV.U R3.x, R0;` (`pb_a.frag`) -- a bool is held in its
+        store is `MOV.U R3.x, R0;` (`0085_pb_a.frag`) -- a bool is held in its
         representation (U32), as the whole store's MOV is."""
         _ptc = _pointee_code(self.module, var)
         if _ptc == BOOL_TYPE_CODE:
@@ -488,7 +597,7 @@ class StoreOps(object):
         to."""
         if const is not None:
             # slot 0 into lane x is the identity and prints bare
-            # (`bv_n62.vert`'s `u_xlat3.x = float(0.0)`: `MOV.F R39.x, {0, 0,
+            # (`0000_bv_n62.vert`'s `u_xlat3.x = float(0.0)`: `MOV.F R39.x, {0, 0,
             # 0, 0};`); another lane reads slot 0 through `.x` (`mb_n5`'s
             # `.w`)
             return v if ci == 0 else "%s.x" % v
@@ -515,7 +624,7 @@ class StoreOps(object):
                else None)
         if _rk is not None:
             # the load's node IS the lane (core.py `_retarget_node`): the
-            # fold dumps of `ld_mx` (a matrix part's MOV) and `lx_b.frag` (a
+            # fold dumps of `ld_mx` (a matrix part's MOV) and `0104_lx_b.frag` (a
             # scalar block load: the merge 0x57 on the 0x3b itself, `LDC.F32
             # R1.x, buf0[16];`)
             _wline = _rk
@@ -527,9 +636,9 @@ class StoreOps(object):
                                     _o))
         # notes/55 §7: the merge's copy of the OTHER components passes their
         # value through; the scheduler must know.  Only the local's own
-        # components (`lv_v2a.frag`'s vec2: `MOV.F R0.y, R0;`).  A local that
+        # components (`0069_lv_v2a.frag`'s vec2: `MOV.F R0.y, R0;`).  A local that
         # stores NO other component has nothing to pass through, and prints
-        # the write alone (`mb_n5.vert`: `u_xlat0.w = 1.0` its only store,
+        # the write alone (`0077_mb_n5.vert`: `u_xlat0.w = 1.0` its only store,
         # `MOV.F R0.w, {1, 0, 0, 0}.x;` and no copy).
         _pmask = "".join(
             _COMPONENTS[k] for k in range(_vt)
@@ -538,8 +647,8 @@ class StoreOps(object):
         # scalar lives in `.x`, so a vector defined at x alone IS the scalar,
         # and the value keeps its own store (the flush) and its second use.
         # Into another lane the store is an insert, a node of its own
-        # (`sel_n.frag`: `u_xlatb0.z = a.x < a.y;` prints `MOV.U R0.z, R0.x;`
-        # with no flush, where `sel_b.frag`'s `.x` prints `MOV.U R1.x, R1;`).
+        # (`0101_sel_n.frag`: `u_xlatb0.z = a.x < a.y;` prints `MOV.U R0.z, R0.x;`
+        # with no flush, where `0095_sel_b.frag`'s `.x` prints `MOV.U R1.x, R1;`).
         _is_node = (not _pmask
                     and (ci == 0 or ENV.get("G2S_LANEFLUSH")))
         if _pmask:
@@ -562,7 +671,7 @@ class StoreOps(object):
             # the MIN on the TEXTURE (`tools/gsum.py` nodes 121.5 / 121.7 /
             # 121.10: the lane store reads the copy, the MIN its source).
             # A copy of another local's NAME is a node of its own and the
-            # read stops at it (`sw_b.frag`, `cfw_deep` is not set there).
+            # read stops at it (`0109_sw_b.frag`, `cfw_deep` is not set there).
             # `G2S_NOLANEDEEP=1`.
             _fv, _fc = _deep
         self.cfw.setdefault(var, {})[ci] = (self._bkey(), _fv, _fc)
@@ -571,7 +680,7 @@ class StoreOps(object):
         if (_is_node and v in self.local_reg.values()
                 and not ENV.get("G2S_NAMECOPYFWD")):
             # ... but a copy of ANOTHER LOCAL's component is a node of its own:
-            # `sw_b.frag`'s `u_xlat4.x = u_xlat10_4.x; .. clamp(u_xlat4.x)`
+            # `0109_sw_b.frag`'s `u_xlat4.x = u_xlat10_4.x; .. clamp(u_xlat4.x)`
             # prints `MOV.F R1.x, R4; MIN.F R2.x, R1, ..` -- the read takes
             # the copy, not the other local's name
             self.cfw_kind[(var, ci)] = "namecopy"
@@ -584,7 +693,7 @@ class StoreOps(object):
                                 _cmv, _reg, _pmask, ci):
         """The pair's copy half.
 
-        ONE `node[36]` FOR BOTH HALVES (notes/91).  `bl_257.vert`, every pair
+        ONE `node[36]` FOR BOTH HALVES (notes/91).  `0091_bl_257.vert`, every pair
         of the prologue:
         * the first store of the local in its block is one seq (`u_xlat5.x =
           dot(..)`: 127 twice);
@@ -607,8 +716,8 @@ class StoreOps(object):
                         and not ENV.get("G2S_INLOADTIE")))
         # WHICH LANE decides, not whether the store opened its block
         # (notes/106, `tools/nodedump.py`): a write into lane x shares its
-        # copy's seq -- `pt_i.frag`'s `u_xlat3.x = a.x * a.y`, which opened
-        # its block without reading the local, 14 and 14; `nr_a.frag`'s
+        # copy's seq -- `0106_pt_i.frag`'s `u_xlat3.x = a.x * a.y`, which opened
+        # its block without reading the local, 14 and 14; `0106_nr_a.frag`'s
         # `u_xlat3.x = -u_xlat1.x`, 22 and 22 -- and a write into another
         # lane does not, opened or not: `pt_i`'s first store `u_xlat3.z`, 3
         # and 5; `pt_j`'s `u_xlat3.z`, 12 and 14.  (`bl_257`'s cases above
@@ -627,7 +736,7 @@ class StoreOps(object):
     def _input_component_load(self, _dvi):
         """Whether `_dvi` loads ONE COMPONENT of an input vector through a
         constant-index chain (`a0.x`): a component select of the input, as
-        a local's component load is -- `sp_i.vert`'s `t.x = a0.x` after
+        a local's component load is -- `0109_sp_i.vert`'s `t.x = a0.x` after
         `t.y = ..` is write 8, pass-through 10, where `sp_g`'s `t.x = a0.x *
         a1.x` (a MUL) and `sp_h`'s `t.x = 1.0` share one seq
         (`tools/nodedump.py`)."""
@@ -644,7 +753,7 @@ class StoreOps(object):
                 >= 2)
 
     def _component_is_statement_temp(self, val, v, const, _dvi):
-        # a LOCAL's register is a name, not a statement's temp: `sw_b.frag`'s
+        # a LOCAL's register is a name, not a statement's temp: `0109_sw_b.frag`'s
         # `u_xlat4.x = u_xlat10_4.x` reads the name and flushes nothing
         return (_is_placeholder(v) and const is None
                 and (v not in self.local_reg.values()
@@ -662,7 +771,7 @@ class StoreOps(object):
     def _component_temp_flush(self, val, v, _cmv):
         """WITH NO MERGE the component store is a plain store of the temp
         into the name, and the temp has its own store, flushed like a whole
-        store's (`mc_n3.vert`: `u_xlat2.x = (-u_xlat1.x) + ..`, `u_xlat2`
+        store's (`0080_mc_n3.vert`: `u_xlat2.x = (-u_xlat1.x) + ..`, `u_xlat2`
         stored only at `.x`, prints `MOV.F R12.x, R13;` and later `MOV.F
         R13.x, R13;`)."""
         start = self.defline[val]
@@ -685,7 +794,7 @@ class StoreOps(object):
                 and val in self.lsplit and _lv[0] != ptr
                 and not ENV.get("G2S_NOMERGEFWD")):
             # `w = u` right after `u.c = ..` in one block reads the MERGE
-            # (`_merge_forward`, the cut `mq_n8.frag`)
+            # (`_merge_forward`, the cut `0091_mq_n8.frag`)
             v = _mfw = self._merge_forward(_lv[0])
             self.values[val] = v
         if v is None:
@@ -701,9 +810,9 @@ class StoreOps(object):
         _vi1 = module.result_insn.get(val)
         # A SELECTION of another value -- a shuffle, an extract, a component
         # load -- is a node of its own, which the store materialises and a
-        # later read takes from the local (`g2s_trace_graph`: `sq_a.frag`'s
-        # `u_xlat0 = u_xlat1.y` and `sq_b.frag`'s `.x` alike, the reader's
-        # source is the store node; `sel_q.frag`'s `.xy` the same).  A
+        # later read takes from the local (`g2s_trace_graph`: `0102_sq_a.frag`'s
+        # `u_xlat0 = u_xlat1.y` and `0102_sq_b.frag`'s `.x` alike, the reader's
+        # source is the store node; `0101_sel_q.frag`'s `.xy` the same).  A
         # scalar result carries comps (0, 0, 0, 0) and is no selection.
         _selected = (_vi1 is not None and (
             _vi1.opcode in (Op.OpVectorShuffle, Op.OpCompositeExtract)
@@ -713,9 +822,9 @@ class StoreOps(object):
                 and _components(module, _vi1.result_type) in (1, 2, 3, 4)
                 and not v.startswith("{")):
             # THE SELECTOR IS THE SOURCE'S, printed as any operand's against
-            # the write mask (`sc_sel.frag`: `MOV.F R0.x,
-            # fragment.attrib[0].y;`; `lv_v2a.frag`'s vec2 of `a.xy`: `MOV.F
-            # R0.xy, fragment.attrib[0];`; `lc_a.frag`'s whole vec4 of
+            # the write mask (`0067_sc_sel.frag`: `MOV.F R0.x,
+            # fragment.attrib[0].y;`; `0069_lv_v2a.frag`'s vec2 of `a.xy`: `MOV.F
+            # R0.xy, fragment.attrib[0];`; `0097_lc_a.frag`'s whole vec4 of
             # `a.yzwx`: `MOV.F R0, fragment.attrib[0].yzwx;`).
             v = _source(self.values, self.comps, val,
                         _components(module, _vi1.result_type))
@@ -802,7 +911,7 @@ class StoreOps(object):
         _sec = self._second_store(ptr)
         _here = self.defblk.get(val) == self.blk_no
         # PENDING FROM AN EARLIER BLOCK -- any block, not only a marker's:
-        # `ce_head4.vert`'s `u_xlat3 = <construct>` is stored in the block
+        # `0072_ce_head4.vert`'s `u_xlat3 = <construct>` is stored in the block
         # the previous `u_xlat2` store opened, while `u_xlat3`'s last store
         # is pending from the block before; the compiler opens a block AT the
         # store (record 33 at seq 102 in a block of its own start), and the
@@ -815,7 +924,7 @@ class StoreOps(object):
             # a SECOND store in the block opened a block at the store: the
             # value was made in the block before and its temp's store folded
             # into it there -- the local reads the temp's name, and there is
-            # no flush (`lv_f1.frag`: `LG2.F32 R1.x, R3.x;` then, in the next
+            # no flush (`0069_lv_f1.frag`: `LG2.F32 R1.x, R3.x;` then, in the next
             # block, `MOV.F R0.x, R1;`)
             self.lines.append(_emit(_mv, _reg + _ds, v))
         elif _split and (_here or val in self.module.constants):
@@ -846,10 +955,10 @@ class StoreOps(object):
         store's, notes/87) -- so into another local it is a PAIR: the write
         at that mask and the copy of the destination's other stored
         components.  The source is read by its NAME: a component-wise value
-        has no merge node to forward (`fa_e.frag`: `u_xlat0.x = ..; u_xlat0.y
+        has no merge node to forward (`0101_fa_e.frag`: `u_xlat0.x = ..; u_xlat0.y
         = ..; u_xlat2 = u_xlat0;` prints the pair writing `u_xlat0` itself,
         then `MOV.F R1.zw, R1; MOV.F R1.xy, R2;`; with `u_xlat0` stored whole
-        before, `fa_f.frag`, the copy is the merge's, notes/85).
+        before, `0101_fa_f.frag`, the copy is the merge's, notes/85).
 
         Only in the block the destination's store stays in; True when the
         store was made here.  `G2S_NOPARTIALCOPY=1` turns it off."""
@@ -899,13 +1008,13 @@ class StoreOps(object):
         f_7100032c30), anything else is its carrier MOV (0xf11530).  The
         local then reads the temp's name at the new block's entry -- `MOV.F
         R0, -a0; MOV.F R0, R0;` and `MUL.F32 R0, ...; MOV.F R0, R0;` in
-        cf_switch.vert, with no self-move.
+        0046_cf_switch.vert, with no self-move.
 
         A CONSTANT is no statement's temp: the store opens its block and
-        writes the constant itself (`lc_b.frag`'s second loop's `u_xlatu1 =
+        writes the constant itself (`0097_lc_b.frag`'s second loop's `u_xlatu1 =
         0u;` after the first loop: `MOV.U R0.x, {0, 0, 0, 0};`)."""
         # ... a register READ THROUGH A SELECTOR is a register too, no
-        # modifier: `so_a.frag`'s second `u_xlat10_22 = texture(..).zw` opens
+        # modifier: `0000_so_a.frag`'s second `u_xlat10_22 = texture(..).zw` opens
         # its block and prints the one `MOV.F R5.xy, R0.zwzw;` (the corpus's
         # `map_0a238124`)
         _selected = (_is_selected_placeholder(v)
@@ -936,7 +1045,7 @@ class StoreOps(object):
                 and self._retarget_node(val, _reg + _ds,
                                         ldc=True) is not None):
             # the load's node writes the local (core.py `_retarget_node`):
-            # `mx_g.vert`'s `u_xlat0 = m[2]` is `MOV.F R0, R0;`, `mx_h`'s
+            # `0104_mx_g.vert`'s `u_xlat0 = m[2]` is `MOV.F R0, R0;`, `mx_h`'s
             # `u_xlat0 = m2` `LDC.F32X4 R0, buf0[32];` -- no store of its own
             # and no temp to flush.  True: the caller forwards the register.
             return True
@@ -972,7 +1081,7 @@ class StoreOps(object):
         if self._is_statement_temp_store(val, v):
             # THE TEMP'S OWN STORE, flushed when the block closes (notes/67
             # §7): after the statements and the branch's `.CC` move, in the
-            # statement's position (`sc_select.frag`: seq 1, after the seq-7
+            # statement's position (`0067_sc_select.frag`: seq 1, after the seq-7
             # `.CC`; `cf_loop`: after both stores).
             if _here and self.defline.get(val) is not None:
                 self.stmtpos[v] = self.defline[val]
@@ -982,9 +1091,9 @@ class StoreOps(object):
     def _tie_to_forwarded_store(self, _fl):
         """A READ FORWARDED from a local's store in this block is that
         store's node, and the store made from it carries the same
-        `node[36]`, whatever the first store's is.  `lp_ca.vert`'s `j = k +
+        `node[36]`, whatever the first store's is.  `0091_lp_ca.vert`'s `j = k +
         1u; k = j;`: the ADD, both stores and the temp's flush are all seq 29
-        (the ADD's, which `j`'s store took); `mq_n8.frag`'s `hlslcc_movcTemp
+        (the ADD's, which `j`'s store took); `0091_mq_n8.frag`'s `hlslcc_movcTemp
         = u_xlat0` after `u_xlat0.xy = fract(..)`, which opened its block, is
         23 with that store while the FRC behind the cut is 22 (notes/91).
         Pass 1's list then orders them."""
@@ -1025,7 +1134,7 @@ class StoreOps(object):
                 and (selection or not (_vx is not None and _vx.opcode
                                        in (Op.OpVectorShuffle,
                                            Op.OpCompositeExtract)))
-                # a component load selects too (`sq_b.frag`: the store of
+                # a component load selects too (`0102_sq_b.frag`: the store of
                 # `u_xlat1.x` reads the MUL, and only the MUL is flushed)
                 and not (val in self.comp_load
                          and not ENV.get("G2S_COMPLOADFLUSH"))
@@ -1050,10 +1159,10 @@ class StoreOps(object):
     def _record_local_forward(self, ptr, val, v, _reg, selected=False):
         """A LOAD IN THIS BLOCK TAKES THE STORED VALUE: the DAG forwards a
         name's store to its reads within the block (notes/65 §3, notes/67 §4)
-        -- `sc_select.frag`'s branch reads the TRUNC (R3), not `b0`'s
+        -- `0067_sc_select.frag`'s branch reads the TRUNC (R3), not `b0`'s
         register (R0).  A value that SELECTS lanes of another is a node of
         its own, materialised by the store even when its lanes lead the
-        source's (`sel_q.frag`: `u_xlatb0.xy = lessThan(a.xyxx, ..).xy;`
+        source's (`0101_sel_q.frag`: `u_xlatb0.xy = lessThan(a.xyxx, ..).xy;`
         prints `MOV.U R1.xy, R0;` and the read takes R1)."""
         bk = self._bkey()
         # a bool local stored whole only from normalised compares holds
@@ -1061,7 +1170,7 @@ class StoreOps(object):
         self.norm_local[ptr] = (self.norm_local.get(ptr, True)
                                 and self._normalised_view(val))
         # a whole store's lanes are component selects of the value, not
-        # lane stores (`sel_l.frag`: `MOV.U.CC HC.x, R0.y;`)
+        # lane stores (`0101_sel_l.frag`: `MOV.U.CC HC.x, R0.y;`)
         for _c in range(4):
             self.cfw_kind.pop((ptr, _c), None)
         if selected and ENV.get("G2S_SELFWD"):
@@ -1096,7 +1205,7 @@ class StoreOps(object):
                             # ... and a component the source stored in an
                             # EARLIER block is read at the copy's line as
                             # the source's own register, which is what the
-                            # copy forwards (notes/114 §21).  `ct_a.frag`:
+                            # copy forwards (notes/114 §21).  `0114_ct_a.frag`:
                             # `tools/gsum.py` gives the MUL the same source
                             # node as the copy's lane-x line, 0x71e8.
                             self.cfw[ptr][_c] = (bk, _sreg, _c)
@@ -1113,7 +1222,7 @@ class StoreOps(object):
             # the local's register (`map_15393bbe`: `MOV.F R2.x, R9.w;` then
             # `MUL.F32 R3.x, R1, R2;`).  A value that is an INPUT's operand
             # (`vertex.attrib[0]`) is forwarded as itself: the reader
-            # re-reads the input (`cf_call.vert`'s `MOV.F R0,
+            # re-reads the input (`0050_cf_call.vert`'s `MOV.F R0,
             # vertex.attrib[0];` then the parameter's `MOV.F R1,
             # vertex.attrib[0];`).
             self.lfwd[ptr] = (bk, _reg, None)
@@ -1135,7 +1244,7 @@ class StoreOps(object):
     def _merge_lane_via(self, val, var, ci):
         """A MERGE LANE STORED FROM A COMPONENT OF ANOTHER LOCAL, itself
         stored whole in this block from a swizzle of a node, is read in the
-        block as THAT NODE at the composed component: `tw_j.frag`'s
+        block as THAT NODE at the composed component: `0109_tw_j.frag`'s
         `u_xlat10_4 = textureLod(..).wxyz; u_xlat4.x = u_xlat10_4.x;
         clamp(u_xlat4.x, ..)` prints `MOV.F R2.x, R4;` for the lane (the
         swizzle's MOV) but `MIN.F R1.x, R3.w, ..` for the read (the fold
@@ -1196,17 +1305,55 @@ class StoreOps(object):
         if odst is not None:
             self._store_output_whole(val, const, src, odst)
             return
+        if self._store_frag_depth(ptr, val, const, src):
+            return
+        # A PER-VERTEX OUTPUT OF TESSELLATION CONTROL is written through
+        # `out[gl_InvocationID]`, and the listing prints NO INDEX:
+        # `water_00540147.tesc`'s `hs_NORMAL0[gl_InvocationID] = ..` is
+        # `MOV.F result.attrib[1].xyz, R18;`.  The output vertex IS the
+        # invocation in this stage, so the index says nothing the
+        # destination does not already say.  (notes/130 §2)
+        _pvo = self._tesc_per_vertex_output(ptr)
+        if _pvo is not None:
+            self._store_output_whole(val, const, src, _pvo)
+            return
         if self.scalarised:
             raise NotEstablished(
                 "a store to something else after a gl_Position store: the "
                 "compiler interleaves them (notes/31)")
+        if ENV.get("G2S_STDBG"):
+            import sys as _s
+            _pi = self.module.globals.get(ptr) or self.module.result_insn.get(ptr)
+            print("STDBG ptr=%r op=%r args=%r name=%r" % (
+                ptr, getattr(_pi, "opcode", None),
+                _pi.args() if _pi is not None else None,
+                self.module.name_of(ptr)), file=_s.stderr)
         raise NotEstablished(
             "a store whose destination is neither a fragment colour output, "
             "a stage output with a Location, nor gl_Position")
 
+    def _tesc_per_vertex_output(self, ptr):
+        """`result.attrib[<loc>]` when `ptr` is `out[<dynamic>]` of a
+        tessellation-control per-vertex output, else None."""
+        if (self.model != ExecutionModel.TessellationControl
+                or ENV.get("G2S_NOTESCPVSTORE")):
+            return None
+        _ch = self.by_result.get(ptr)
+        if (_ch is None or _ch.opcode not in ACCESS_CHAINS
+                or len(_ch.args()) != 2):
+            return None
+        _var = _ch.args()[0]
+        _g = self.module.globals.get(_var)
+        if (_g is None or _g.operands[2] != StorageClass.Output
+                or self.module.decoration(_var, Decoration.Patch) is not None):
+            return None
+        if _scalar_value(self.module, _ch.args()[1]) is not None:
+            return None                 # a constant index is another shape
+        return _output_operand(self.module, _var, self.model)
+
     def _refuse_interleave(self):
-        """ORDER, NOT LOWERING -- and now SCHEDULED.  `if_out.vert` and
-        `p04_out.vert` store gl_Position and then another output, and the
+        """ORDER, NOT LOWERING -- and now SCHEDULED.  `0031_if_out.vert` and
+        `0031_p04_out.vert` store gl_Position and then another output, and the
         compiler emits the second store BETWEEN the last two instructions of
         the first.  That is the block rule of notes/55 §8: a block holds one
         store per name, so the second output shares the `.w` element's block,
@@ -1240,10 +1387,10 @@ class StoreOps(object):
         value's type.
 
         THE SUFFIX IS THE VALUE'S TYPE, not a constant `.F`.
-        `int_umin.frag` stores a uvec4 and the compiler prints `MOV.U
+        `0039_int_umin.frag` stores a uvec4 and the compiler prints `MOV.U
         result_color0, R0;` -- the same suffix rule as every other opcode
         (notes/37), applied to the stored value's type with the MOV opcode.
-        AND THE WRITE MASK: `fr_out2.frag` stores a vec2 and the compiler
+        AND THE WRITE MASK: `0041_fr_out2.frag` stores a vec2 and the compiler
         prints `MOV.F result_color0.xy, R0;` with the self-move masked to
         match."""
         module = self.module
@@ -1264,7 +1411,7 @@ class StoreOps(object):
     def _lane_mov(self, val):
         """The MOV of ONE LANE of an output store: its suffix is the stored
         scalar's type, an instruction's or a constant's, as the whole store's
-        is (`sel_r.frag` stores a uint select and uint constants into a
+        is (`0101_sel_r.frag` stores a uint select and uint constants into a
         uvec4's lanes: `MOV.U result_color0.w, R0.x;`, `MOV.U
         result_color0.x, {1, 0, 0, 0};`)."""
         module = self.module
@@ -1286,7 +1433,7 @@ class StoreOps(object):
     def _close_colour_block(self, dst):
         """A SECOND STORE TO THE OUTPUT IN ONE BLOCK OPENS A BLOCK (notes/55
         §8, sched.py `_block_spans`), and the block that closes takes its
-        temps' stores with it (notes/67 §7).  The cut `mq_n26.frag` stores
+        temps' stores with it (notes/67 §7).  The cut `0087_mq_n26.frag` stores
         `SV_Target0` twice: `u_xlatb0 = u_xlat0.x < 0.0`'s name store `MOV.U
         R8.x, R1;` prints BEFORE the second store, in the first block -- so
         the flushed lines end the old block (the boundary moves past them, as
@@ -1296,7 +1443,7 @@ class StoreOps(object):
         if (not ENV.get("G2S_NOCOLCOMPPEND") and _okey in self.stored_key
                 and dst not in self.ostore_blk):
             # A COMPONENT STORE is a store to the output too (`_second_store`
-            # keys it `("out", name)`): `ox_e.frag`'s `o.y = a.x; o = a * 2.0;`
+            # keys it `("out", name)`): `0000_ox_e.frag`'s `o.y = a.x; o = a * 2.0;`
             # opens a block at the whole store, the MUL in the block before
             self.ostore_blk[dst] = self.stored_key[_okey]
         if (self.ostore_blk.get(dst) == self._bkey()
@@ -1316,7 +1463,7 @@ class StoreOps(object):
             # STORED IN AN EARLIER BLOCK: an output is never read, so its
             # store stays pending (notes/65 §4, the vertex outputs'
             # `_pending_output`), and this store opens a block of its own,
-            # reading its value's temp by NAME -- no self-move.  `cr_m.frag`'s
+            # reading its value's temp by NAME -- no self-move.  `0000_cr_m.frag`'s
             # second `c = ..`: the compiler's block 2 holds the colour store
             # alone, its source a leaf (`tools/gsum.py`).
             self._open_block()
@@ -1333,7 +1480,7 @@ class StoreOps(object):
         and self-move share one `node[36]`).  A MODIFIED value is
         materialised into a full-mask register first (notes/47), so the store
         is really two lines plus the self-move.  ONE STATEMENT, ONE
-        `node[36]` (notes/56): the compiler's stamps for `fr_mrt.frag` give
+        `node[36]` (notes/56): the compiler's stamps for `0044_fr_mrt.frag` give
         the carrier, the store and its self-move all seq 3 and the other
         colour store seq 1, and pass 1 lists the three first.  So the three
         lines are one tie group, and the order is the scheduler's.
@@ -1389,7 +1536,7 @@ class StoreOps(object):
                 and not ENV.get("G2S_NOMERGEFWD")):
             # THE MERGE IS THE STORED VALUE (notes/85, `_merge_forward`): the
             # output reads the merge node, no self-move (a local read), and
-            # the local's own store follows it (`pb_c.frag`: `MOV.F
+            # the local's own store follows it (`0085_pb_c.frag`: `MOV.F
             # result_color0, R0;` then `MOV.F R1, R0;`, all seq 18).
             _X = self._merge_forward(_lv[0])
             self.lines.append("%s %s%s, %s;" % (_mov, dst, _ds, _X))
@@ -1404,8 +1551,8 @@ class StoreOps(object):
                 and val not in self.load_of and val not in self.fwd_of):
             # THE COLOUR STORE IS ITS VALUE'S STATEMENT: the output's MOV
             # carries the value's `node[36]` (`tools/nodedump.py`:
-            # `f03_tex.frag` the TEX's 9, `int_iadd.frag` the I2F's 4,
-            # `ld_rgba32f.frag` the LOADIM's 4 -- where the load's own dead
+            # `0030_f03_tex.frag` the TEX's 9, `0031_int_iadd.frag` the I2F's 4,
+            # `0111_ld_rgba32f.frag` the LOADIM's 4 -- where the load's own dead
             # temp, also seq 4, is listed after the output's MOV and prints
             # after it, notes/111)
             _tg = _sched.Tie([len(self.lines) - 1])
@@ -1418,8 +1565,8 @@ class StoreOps(object):
             # A READ FORWARDED FROM A LOCAL'S STORE is that store's node,
             # and the colour store made from it carries its `node[36]`
             # (`_tie_to_forwarded_store`); pass 1 then lists the output's
-            # store first (`cr_i.frag`: `MOV.F result_color0, R0;` before the
-            # local's `MOV.F R1, R0;`, as `pb_c.frag`'s merge)
+            # store first (`0101_cr_i.frag`: `MOV.F result_color0, R0;` before the
+            # local's `MOV.F R1, R0;`, as `0085_pb_c.frag`'s merge)
             self._tie_to_forwarded_store(_fl)
         self._colour_self_move(val, src, _mov, _ds)
         if _mat_at is not None:
@@ -1429,11 +1576,11 @@ class StoreOps(object):
         """A COLOUR STORE FROM A REGISTER IS FOLLOWED BY A SELF-MOVE.
 
         `MOV.F R0, R0;` appears after every whole-vector colour store whose
-        source is a register -- `f03_tex.frag`, `fr_mrt.frag`,
-        `int_iadd.frag` -- and never after one whose source is an attribute
+        source is a register -- `0030_f03_tex.frag`, `0044_fr_mrt.frag`,
+        `0031_int_iadd.frag` -- and never after one whose source is an attribute
         or a constant.  PROVENANCE, MEASURED (notes/44): from the fold dump,
-        `fr_in.frag` (`c = v`, an attribute) builds ONE 0x47 + ONE 0x3a, and
-        `int_iadd.frag` (`c = <computed>`) TWO 0x47 + TWO 0x3a, both MOVs
+        `0044_fr_in.frag` (`c = v`, an attribute) builds ONE 0x47 + ONE 0x3a, and
+        `0031_int_iadd.frag` (`c = <computed>`) TWO 0x47 + TWO 0x3a, both MOVs
         taking the same source -- so the second assignment is in the IR, not
         an artefact of the printer, and it appears exactly when the stored
         value lives in a register.
@@ -1441,7 +1588,7 @@ class StoreOps(object):
         THE TEMP'S OWN STORE RENAMES, as the vertex outputs' does (notes/74
         §2, notes/84): the instruction writes a NEW lowering vreg and the
         self-move copies it into the statement temp's name.  They share a
-        register when they can, but not always: `lm_icb.frag` prints `I2F.U
+        register when they can, but not always: `0071_lm_icb.frag` prints `I2F.U
         R0, R4; MOV.F result_color0, R0; MOV.F R5, R0;` -- the name, live
         out of the block, meets the dead element temps (R0..R3) that pass 1
         lists after it."""
@@ -1472,7 +1619,7 @@ class StoreOps(object):
               and not self._swizzled_local_read(val)
               # a value FORWARDED from a local's store that opened this
               # block was made before the cut: it is its temp's NAME here,
-              # no self-move (`ox_b.frag`: `t.x = 0.0; t = a * 2.0; o = t;`
+              # no self-move (`0109_ox_b.frag`: `t.x = 0.0; t = a * 2.0; o = t;`
               # prints `MOV.F result_color0, R1;` alone, `t`'s store after)
               and not (val in self.fwd_of
                        and self.defline.get(self.fwd_of[val]) is not None
@@ -1484,7 +1631,7 @@ class StoreOps(object):
               # A SELECT'S RESULT IS NO TEMP OF THIS STATEMENT: the ARMS
               # store it, so there is nothing to rename -- the same reading
               # `_is_statement_temp_store` makes for a local store
-              # (`mb_n24.vert`).  `post_sky_dlss_mask.frag` stores the
+              # (`0077_mb_n24.vert`).  `post_sky_dlss_mask.frag` stores the
               # `(b) ? 1.0 : 0.0` of an IF/ELSE to a colour output and the
               # compiler prints the store alone.  `G2S_ARMSELFMOVE=1`
               # restores the line.
@@ -1496,7 +1643,7 @@ class StoreOps(object):
     def _temp_store_queued(self, src):
         """Does the temp `src` already have its own store queued -- the
         local's store it was forwarded from queued it (`_store_in_block`)?
-        A temp has ONE store: `cr_i.frag`'s `u_xlat0 = a * 2.0; c = u_xlat0;`
+        A temp has ONE store: `0101_cr_i.frag`'s `u_xlat0 = a * 2.0; c = u_xlat0;`
         prints `MOV.F result_color0, R0; MOV.F R1, R0; MOV.F R0, R0;`, one
         self-move, which is the flush's.  `G2S_COLDUPFLUSH=1` restores the
         second."""
@@ -1578,7 +1725,7 @@ class StoreOps(object):
             # `gl_Position` STORED BEFORE, never read: the whole store opens
             # a block at itself (the walker's pending test, notes/65 §4), so
             # the local it loads is read by NAME at that block's entry, not
-            # forwarded from this block's stores (`mb_n16.vert`: `u_xlat0.x =
+            # forwarded from this block's stores (`0077_mb_n16.vert`: `u_xlat0.x =
             # dot(..); gl_Position = u_xlat0;` after the four component
             # stores prints `MOV.F result.position.x, R2;`, R2 being
             # `u_xlat0`).
@@ -1588,7 +1735,7 @@ class StoreOps(object):
         if _ppend and self.lines and self.cuts[-1:] != [len(self.lines)]:
             # THE BLOCK OPENS AT THE STORE, explicitly: the scheduler's own
             # pending test runs per control-flow segment and forgets a store
-            # made before an IF (`mb_n24.vert`: `u_xlat18 = (b) ? -1.0 : 1.0;`
+            # made before an IF (`0077_mb_n24.vert`: `u_xlat18 = (b) ? -1.0 : 1.0;`
             # after the ENDIF, then `gl_Position = u_xlat0` -- the store
             # prints first, `result.position.x` in the next block).
             self._open_block()
@@ -1610,7 +1757,7 @@ class StoreOps(object):
             self.pflush = None
             # the name is the temp's statement record: it walks where the
             # statement stood, ahead of the lowering vreg (notes/68 §4 -- the
-            # compiler numbers it 1, the DP4 5, in `pc_e.vert`)
+            # compiler numbers it 1, the DP4 5, in `0074_pc_e.vert`)
             self.stmtpos[_pnm] = _pfrom
             self.flush_q.append((_pnm, "MOV.F", ".x", None, _pfrom))
             self._flush(only=_pnm)
@@ -1621,9 +1768,9 @@ class StoreOps(object):
         next one.  So every temp's store still pending is flushed THERE, in
         `.x`'s block, not at the end of the body.  First read on a call's
         value -- `.x` reads it forwarded (the return name) and the temp is
-        flushed before `.y` reads it by name (`cf_call.vert`: `MOV.F
+        flushed before `.y` reads it by name (`0050_cf_call.vert`: `MOV.F
         result.position.x, R1; MOV.F R0, R1; MOV.F R0.x, R0.y;`) -- and it is
-        the same close of the block for any temp: `bc_sbo.vert`'s bitcast
+        the same close of the block for any temp: `0072_bc_sbo.vert`'s bitcast
         temp is flushed between the ADD and the I2F (notes/72).  The flushed
         store is a line of THAT block, so the boundary the walker opens for
         `.y` falls after it: an explicit cut, where the scheduler's own rule
@@ -1658,7 +1805,7 @@ class StoreOps(object):
             if _isp and not _l.startswith("MOV.F result.position.x,"):
                 # ... at its FIRST line, which is the scratch move, or the
                 # re-load ahead of it when the value is a block load
-                # (`pl_e.vert`: `LDC.F32X2 R0.y, buf0[16];` opens `.y`'s
+                # (`0076_pl_e.vert`: `LDC.F32X2 R0.y, buf0[16];` opens `.y`'s
                 # block, not the `MOV.F R0.x, R0.y;` after it)
                 _at = _start if _start is not None else len(self.lines)
                 if _at > 0 and self.cuts[-1:] != [_at]:
@@ -1676,7 +1823,7 @@ class StoreOps(object):
         full-mask register -- the assignment takes operand-form variant 0xac
         instead of 0xab for it.  A negate has no instruction of its own, so
         the instruction that puts it in the register is a MOV carrying the
-        modifier, which is `MOV.F R0, -vertex.attrib[0];` in `un_neg.vert`.
+        modifier, which is `MOV.F R0, -vertex.attrib[0];` in `0011_un_neg.vert`.
         """
         cs = self.comps.get(val, _IDENTITY)
         if _modified(src):
@@ -1690,7 +1837,7 @@ class StoreOps(object):
         scratch = self._scratch_for(src)
         # ONE SCRATCH PER ELEMENT: each `.y..w` is a statement in a block of
         # its own with its own scratch node -- the compiler's vregs 6, 7, 8 in
-        # `pt_h.vert`, which a single shared placeholder made interfere across
+        # `0082_pt_h.vert`, which a single shared placeholder made interfere across
         # the blocks (notes/82).  `G2S_ONESCRATCH=1` restores the shared one.
         _scr3 = scratch
         if not ENV.get("G2S_ONESCRATCH"):
@@ -1708,7 +1855,7 @@ class StoreOps(object):
                 and _lw[1] != src and cs == _IDENTITY):
             # A WHOLE LOAD OF A MATERIALISED LOCAL stored in this block: `.x`
             # takes the stored value, `.y..w` open blocks of their own and
-            # read the NAME there (`ce_head.vert`: `MOV.F result.position.x,
+            # read the NAME there (`0072_ce_head.vert`: `MOV.F result.position.x,
             # R18;` then `MOV.F R0.x, R17.y;` -- R17 being `u_xlat2`).
             more = [more[0]] + self._position_elements(
                 _s3, lambda _c: "%s.%s" % (_lw[1], _c))
@@ -1719,10 +1866,10 @@ class StoreOps(object):
             # `gl_Position = t.yyyy`, the load being the name itself, not a
             # temp.  `.x` shares the store's block and takes the stored
             # value; `.y..w` each open a block and read the NAME at its
-            # entry, one scratch copy apiece (`lv_wc.vert`: `MOV.F
+            # entry, one scratch copy apiece (`0072_lv_wc.vert`: `MOV.F
             # result.position.x, R0.y;` then three `MOV.F R0.x, R1.y;` -- the
             # same reading as the geometry shadow's, notes/65).
-            # (component 0 prints bare, the printer's rule: `sp_f.vert`'s
+            # (component 0 prints bare, the printer's rule: `0109_sp_f.vert`'s
             # `vec4(t.x)` reads `MOV.F R0.x, R1;`)
             _nm = _swizzle(_ln[0], _ln[1])
             more = [more[0]] + self._position_elements(_s3, lambda _c: _nm)
@@ -1733,9 +1880,9 @@ class StoreOps(object):
             # THE SAME SPLAT THROUGH A SHUFFLE of the whole load
             # (`gl_Position = t.yyyy`): the swizzle of the name is the same
             # read, so `.y..w` each open a block, read the NAME, one scratch
-            # copy apiece -- `sp_b.vert` prints three `MOV.F R0.x, R1.y;`,
-            # `sp_c.vert` (the lane stored in an earlier block) three
-            # `MOV.F R0.x, R1.z;`, `sb_c.vert` three reads of `u_xlat3`'s
+            # copy apiece -- `0109_sp_b.vert` prints three `MOV.F R0.x, R1.y;`,
+            # `0109_sp_c.vert` (the lane stored in an earlier block) three
+            # `MOV.F R0.x, R1.z;`, `0109_sb_c.vert` three reads of `u_xlat3`'s
             # register, not of the dot's temp
             _nm = _swizzle(_shl, cs[0])
             more = [more[0]] + self._position_elements(_s3, lambda _c: _nm)
@@ -1745,7 +1892,7 @@ class StoreOps(object):
             # A WHOLE LOAD OF A LOCAL WHOSE `.x` THIS BLOCK STORED: `.x`
             # shares the block and takes the stored value, as a component
             # read does (notes/69), while `.y..w` open blocks and read the
-            # name.  `pt_a.vert` (`b.x = dot(a, b); gl_Position = b;`) prints
+            # name.  `0073_pt_a.vert` (`b.x = dot(a, b); gl_Position = b;`) prints
             # `MOV.F result.position.x, R0;` -- the DP4's register, not b's.
             more[0] = "MOV.F result.position.x, %s;" % _swizzle(
                 _sp0[0], _sp0[1])
@@ -1763,7 +1910,7 @@ class StoreOps(object):
     def _position_from_block_load(self, val, const, src, cs, more, _s3):
         """A BLOCK LOAD STORED WHOLE: `.y..w` are blocks of their own, and
         each substitutes the load again -- an LDC per element block
-        (`pl_e.vert`), its mask the one component read (`_narrow_loads`)."""
+        (`0076_pl_e.vert`), its mask the one component read (`_narrow_loads`)."""
         if not (src in self.ldc_vreg and const is None and cs == _IDENTITY
                 and val not in self.head_src
                 and more[0] == "MOV.F result.position.x, %s;" % src):
@@ -1781,11 +1928,11 @@ class StoreOps(object):
 
     def _position_component(self, val, const, src, comp):
         """A store through a chain that already names ONE component is one
-        instruction: `w1_mov.vert` writes `gl_Position.x` and gets `MOV.F
+        instruction: `0074_w1_mov.vert` writes `gl_Position.x` and gets `MOV.F
         result.position.x, vertex.attrib[0];`.  THE SAME RULE AS THE
         WHOLE-VECTOR STORE, keyed on the DESTINATION component: `.x` is
         written straight from the source, and `.y`, `.z`, `.w` go through the
-        scratch register (`w2_mov.vert`).
+        scratch register (`0031_w2_mov.vert`).
 
         A COMPUTED VALUE IS THE OUTPUT-CHAIN STORE'S CASE (notes/74): the
         position component store is the same assignment statement as
@@ -1795,11 +1942,11 @@ class StoreOps(object):
             §8).  The compiler's blocks for `chr_eye`: each `gl_Position.c =
             dot(..)` store sits in the block after its DP4.
           * `.x` from a scalar temp made in the block is followed by the
-            temp's flush, `MOV.F R0.x, R0;` (`pc_e.vert`, as `sc_dot2.frag`,
+            temp's flush, `MOV.F R0.x, R0;` (`0074_pc_e.vert`, as `0067_sc_dot2.frag`,
             notes/66 §3).
           * `.y..w` from a whole scalar register go straight to the lane, no
-            scratch (`pc_d.vert`: `DP4.F32 R0.x, ..; MOV.F
-            result.position.y, R0.x;`, as `sc_mulw.frag`, notes/70)."""
+            scratch (`0074_pc_d.vert`: `DP4.F32 R0.x, ..; MOV.F
+            result.position.y, R0.x;`, as `0070_sc_mulw.frag`, notes/70)."""
         self._second_store(_POSITION)
         if const is None and self._stale_ldc(val):
             self._reload(val)
@@ -1822,7 +1969,7 @@ class StoreOps(object):
         if src.startswith("{") and val not in self.comps \
                 and not ENV.get("G2S_POSCONSCRATCH"):
             # A SCALAR CONSTANT goes straight to the lane here too, as it
-            # does into any other output (`sc_cstore.frag`, above): no
+            # does into any other output (`0067_sc_cstore.frag`, above): no
             # scratch, its slot-0 selector printed.  `post_popup_face_v.vert`
             # prints `MOV.F result.position.z, {0, 0, 0, 0}.x;`.
             return ["MOV.F result.position.%s, %s.x;"
@@ -1848,7 +1995,7 @@ class StoreOps(object):
     def _store_output_component(self, val, const, src, _oc):
         """A STORE THROUGH A CHAIN INTO ANY OTHER LOCATION OUTPUT.
 
-        `st3_dstswz.vert` writes `v.zw = a0.xy` and glslang scalarises it in
+        `0044_st3_dstswz.vert` writes `v.zw = a0.xy` and glslang scalarises it in
         the SPIR-V already -- two access chains with constant indices -- so
         each one is the same shape the `gl_Position` component store has,
         with the destination named out of the binding namespace instead:
@@ -1864,20 +2011,20 @@ class StoreOps(object):
         (notes/55 §8, notes/65 §4), and the old block's pending temp stores
         are flushed first (`_second_store`).  A local the statement loads is
         then read at the new block's entry by its NAME, not the forwarded
-        value (`sc_ldw.frag`: `o.w = x1` reads x1's register, vreg 3 in the
+        value (`0070_sc_ldw.frag`: `o.w = x1` reads x1's register, vreg 3 in the
         node dump, after the flush of the MUL's temp)."""
         _obase, _ocomp = _oc
         _osec = self._second_store(("out", _obase))
         if const is None and self._stale_ldc(val):
             # the load again, in the block this store is in (`_reload`;
-            # `pl_a.vert`'s `o.y`: `LDC.F32X2 R0.y`)
+            # `0076_pl_a.vert`'s `o.y`: `LDC.F32X2 R0.y`)
             self._reload(val)
             src = self.values.get(val)
         if _osec and val in self.load_of:
             src = self.load_of[val][1]
         elif _osec and const is None and self._name_read(val) is not None:
             # the new block reads the local by NAME, a component too
-            # (`pk_e.vert`: `o.w = t.y` -> `MOV.F R0.x, R5.y;`, R5 = t;
+            # (`0082_pk_e.vert`: `o.w = t.y` -> `MOV.F R0.x, R5.y;`, R5 = t;
             # notes/81 §2)
             _nr = self._name_read(val)
             src = _nr[0]
@@ -1889,7 +2036,7 @@ class StoreOps(object):
         if src.startswith("{") and val not in self.comps:
             # A SCALAR CONSTANT goes straight to its component, its slot-0
             # selector printed wherever it is not the destination's own lane
-            # (`sc_cstore.frag`: `MOV.F result_color0.y, {1, 0, 0, 0}.x;`) --
+            # (`0067_sc_cstore.frag`: `MOV.F result_color0.y, {1, 0, 0, 0}.x;`) --
             # the gather through a scratch `.x` is an addressable operand's
             # (st3_dstswz), not a constant's.
             self.lines.append("%s %s, %s%s;"
@@ -1903,7 +2050,7 @@ class StoreOps(object):
             # wrote; notes/81 §3)
             # Into ANOTHER lane the read stays a component select of the
             # construct and gathers through a scratch `.x` as any selected
-            # operand does (`cr_f.frag`: `c.y = u_xlat0.y` prints `MOV.F
+            # operand does (`0101_cr_f.frag`: `c.y = u_xlat0.y` prints `MOV.F
             # R5.x, R1; MOV.F result_color0.y, R5.x;`).
             _b = _crd.split(".")[0]
             if _ocomp == 0:
@@ -1922,9 +2069,9 @@ class StoreOps(object):
             # (notes/70): the store reads the temp's NAME through a component
             # select, so there is no scratch and -- the value having one use,
             # its own store -- no flush either (`nodedump` on
-            # `sc_mulw.frag`: the MUL is the name's vreg).  `sc_mulw.frag`
+            # `0070_sc_mulw.frag`: the MUL is the name's vreg).  `0070_sc_mulw.frag`
             # prints `MUL.F32 R0.x, ...; MOV.F result_color0.w, R0.x;` and
-            # `sc_selw.frag` the same after its ENDIF.
+            # `0070_sc_selw.frag` the same after its ENDIF.
             self.lines.append("%s %s, %s.x;" % (_mv, lane, src))
         else:
             _sc = _swizzle(src, self.comps.get(val, _IDENTITY)[0])
@@ -1937,7 +2084,7 @@ class StoreOps(object):
         (notes/65 §4: an access from another block starts `[24]`/`[32]`/
         `[40]` afresh), so its store is no longer pending and the next store
         of it does not open a block.  MEASURED with `g2s_trace_blkrec` on
-        `cr_l.frag`: at `u_xlat0 = vec4(..)`, after `c.xyz = u_xlat0.yzw`,
+        `0102_cr_l.frag`: at `u_xlat0 = vec4(..)`, after `c.xyz = u_xlat0.yzw`,
         the record shows `[24]` = the block `c.z`'s store opened, `[32]` set
         (the read) and `[40]` clear -- no block opens, and the construct's
         writes, the store and the temp's flush are one statement (seq 27).
@@ -1950,18 +2097,18 @@ class StoreOps(object):
                 del self.lpend[_var]
 
     def _is_whole_scalar_register(self, val, src):
-        """(a load only as a whole scalar -- a local's NAME, `sc_ldw.frag` --
-        not a component of a block vector, which gathers: `pl_b.vert`) (a
+        """(a load only as a whole scalar -- a local's NAME, `0070_sc_ldw.frag` --
+        not a component of a block vector, which gathers: `0076_pl_b.vert`) (a
         DP4's result carries comps (0, 0, 0, 0): the test is a scalar the
         value's own instruction wrote, as for the position lanes, notes/74
-        §3 -- `mb_n30.vert`'s `MOV.F result.attrib[4].w, R12.x;`)"""
+        §3 -- `0078_mb_n30.vert`'s `MOV.F result.attrib[4].w, R12.x;`)"""
         _vi = self.module.result_insn.get(val)
         # A SCALAR INTERFACE OPERAND IS A WHOLE SCALAR VALUE TOO: the rule is
         # about the value, not about where it lives, so a `float` input goes
         # straight to the lane like a register does -- `post_popup_face_v`'s
         # `in_TEXCOORD0` (an `OpTypeFloat` Input) prints `MOV.F
         # result.attrib[1].z, vertex.attrib[1].x;`, while a COMPONENT of a
-        # vector input still gathers through the scratch (`st3_dstswz.vert`,
+        # vector input still gathers through the scratch (`0044_st3_dstswz.vert`,
         # whose `a0.xy` is a `vec4`'s).  `G2S_NOSCALARIFACE=1` keeps the
         # register-only test.
         _iface = (not _is_placeholder(src) and not src.startswith("{")
@@ -1976,7 +2123,7 @@ class StoreOps(object):
 
     def _output_lane_x(self, val, src, _obase, _mv="MOV.F", opened=False):
         """THE DESTINATION decides (notes/69): `.x` is written straight from
-        any source component (`lv_v2a.frag`: `MOV.F result_color0.x,
+        any source component (`0069_lv_v2a.frag`: `MOV.F result_color0.x,
         fragment.attrib[0].z;`), `.y..w` through a scratch `.x` -- the
         position store's rule.  `_mv` is the lane's MOV (`_lane_mov`).
 
@@ -1984,10 +2131,10 @@ class StoreOps(object):
         temp's own store belongs to the block before it -- flushed there,
         when the name store is the value's only use, so the instruction
         writes the name itself -- and the store reads the NAME in the new
-        block.  `uo_b.frag` (`o1.w` stored earlier, then `o1.x = a + b`):
+        block.  `0105_uo_b.frag` (`o1.w` stored earlier, then `o1.x = a + b`):
         the ADD is stored straight by a 0x3a (seq 24) and the output's store
         (seq 25) reads a 0x2b register read of the name, `MOV.U
-        result_color1.x, R2;` with no self-move (`g2s_dag`).  `uo_a.frag`,
+        result_color1.x, R2;` with no self-move (`g2s_dag`).  `0105_uo_a.frag`,
         whose `o1.x` is the first store to `o1`, keeps the self-move."""
         module = self.module
         _sc = _swizzle(src, self.comps.get(val, _IDENTITY)[0])
@@ -1999,7 +2146,7 @@ class StoreOps(object):
             # is this store gives the store's carrier MOV a one-use source
             # with no modifier, and the MOV folds into it (f_7100032c30,
             # notes/64 §5): the load writes the output itself.
-            # `ld_f1s.frag` prints `LDC.F32 result_color0.x, buf0[16];` and
+            # `0070_ld_f1s.frag` prints `LDC.F32 result_color0.x, buf0[16];` and
             # no MOV.
             self.lines[_ld[0]] = self.lines[_ld[0]].replace(
                 "%s.x," % _ld[1], "%s.x," % _obase, 1)
@@ -2019,7 +2166,7 @@ class StoreOps(object):
             # temp's, forwarded inside the block, so it has two uses -- this
             # store and the temp's own store, flushed after it -- and the
             # instruction cannot fold into the temp.  The flush is the
-            # self-move: `sc_dot2.frag` prints `MOV.F result_color0.x, R0;
+            # self-move: `0067_sc_dot2.frag` prints `MOV.F result_color0.x, R0;
             # MOV.F R0.x, R0;`.  It is `_flush`'s store, as for the position
             # `.x` (notes/74): the instruction writes a new lowering vreg, the
             # name walks at its statement.
@@ -2031,11 +2178,37 @@ class StoreOps(object):
             else:
                 self.lines.append("%s %s.x, %s;" % (_mv, src, src))
 
+    def _store_frag_depth(self, ptr, val, const, src):
+        """A store into `gl_FragDepth`: `MOV.F result.depth.z, R0.x;`.
+
+        All three listings in the corpus that write depth print exactly that
+        -- the `.z` lane of `result.depth`, and the value read with `.x`
+        (notes/115 §1).  `gl_FragDepth` is an Output with a BuiltIn and NO
+        Location, so `_output_operand` does not name it.
+
+        Only the register form is written: no listing stores a constant
+        depth, so that refuses rather than inventing a spelling."""
+        if ENV.get("G2S_NOFRAGDEPTH"):
+            return False
+        _bi = self.module.decoration(ptr, Decoration.BuiltIn)
+        if _bi is None or _bi[0] != BuiltIn.FragDepth:
+            return False
+        if const is not None or not src or not src.startswith("#"):
+            raise NotEstablished(
+                "a depth store whose value is not a plain register: not "
+                "measured")
+        self._refuse_interleave()
+        _mov, _n, _ds = self._value_mov(val)
+        if _n != 1:
+            raise NotEstablished("a depth store of more than one component")
+        self.lines.append("%s result.depth.z, %s.x;" % (_mov, src))
+        return True
+
     def _store_output_whole(self, val, const, src, odst):
         """THE SAME SHAPE AS THE COLOUR STORE, and it needs the same three
         things: the MOV's suffix from the stored value's type, the
         destination's WRITE MASK from the value's component count (notes/41),
-        and the self-move when the source is a register.  `wb2_add.vert`
+        and the self-move when the source is a register.  `0041_wb2_add.vert`
         prints
             MOV.F result.attrib[0].xy, R0;
             MOV.F R0.xy, R0;"""
@@ -2051,7 +2224,7 @@ class StoreOps(object):
                 and val not in self.comps
                 and not ENV.get("G2S_NOMERGEFWD")):
             # THE MERGE IS THE STORED VALUE, as for a colour store (notes/85):
-            # `mf_a.vert`'s `o = u_xlat0` right after `u_xlat0.w = dot(..)`
+            # `0103_mf_a.vert`'s `o = u_xlat0` right after `u_xlat0.w = dot(..)`
             # reads the pair's node, and the local's own store follows it --
             # sharing its register, `MOV.F result.attrib[0], R1; MOV.F R1,
             # R1;` (`monster_001ea2e4`: `MOV.F result.attrib[9], R5; ..
@@ -2070,7 +2243,7 @@ class StoreOps(object):
         # A WHOLE READ OF A PARTLY STORED LOCAL writes the components it ever
         # stores (`_stored_mask`, the colour store's rule, notes/87), and
         # when every one of them was stored in this block, from one value,
-        # it reads that value (notes/69): `ld_ar.vert`'s `p = u_xlat1`,
+        # it reads that value (notes/69): `0000_ld_ar.vert`'s `p = u_xlat1`,
         # `u_xlat1` stored only at `.x` just before, prints `MOV.F
         # result.attrib[1].x, R2;` -- R2 the ADD -- and the local's own store
         # after it.
@@ -2102,7 +2275,7 @@ class StoreOps(object):
                     _tg.seq = max(_defs)
                     _tg.append(len(self.lines))
                     self.ties.append(_tg)
-        # AND THE SOURCE'S SWIZZLE.  `st1_swz.vert` stores `a0.wzyx` and the
+        # AND THE SOURCE'S SWIZZLE.  `0044_st1_swz.vert` stores `a0.wzyx` and the
         # compiler prints the selector on the source, exactly as an
         # arithmetic operand does (notes/41).
         _sw = self.comps.get(val)
@@ -2111,7 +2284,7 @@ class StoreOps(object):
                 and self._retarget_node(val, odst + _ds,
                                         ldc=True) is not None):
             # the load's node writes the output (core.py `_retarget_node`):
-            # `mx_g.vert`'s `o = m[1]` is `MOV.F result.attrib[0], R1;`,
+            # `0104_mx_g.vert`'s `o = m[1]` is `MOV.F result.attrib[0], R1;`,
             # `mx_h`'s `o = m1` `LDC.F32X4 result.attrib[0], buf0[16];`
             return
         _crd = (self._con_read(val)
@@ -2132,7 +2305,7 @@ class StoreOps(object):
         self._tie_output_to_read(val)
         self.lines.append("%s %s%s, %s;" % (_mov, odst, _ds, src))
         # ... but a materialised LOCAL'S NAME is no temp and has no store of
-        # its own to flush: `mb_n24.vert`'s `vs_NORMAL0.xyz = u_xlat0.xyz`
+        # its own to flush: `0077_mb_n24.vert`'s `vs_NORMAL0.xyz = u_xlat0.xyz`
         # prints `MOV.F result.attrib[1].xyz, R11;` alone.  (A LOCAL READ --
         # by name or forwarded from its store in this block -- is not this
         # statement's temp: the temp's own store belongs to the local's
@@ -2150,7 +2323,7 @@ class StoreOps(object):
         never read, so it stays pending).  The value's instructions stay in
         the old block with its temps' stores, and the value -- made before
         the cut -- is its temp's NAME, so the store has no self-move.
-        `lp_oe.vert` (`o = a + b; t = a * b; o = t + b;`) prints the second
+        `0091_lp_oe.vert` (`o = a + b; t = a * b; o = t + b;`) prints the second
         ADD before the first store and `MOV.F result.attrib[0], R3;` last,
         alone (notes/91)."""
         _wsec = self._second_store(("out", odst))
@@ -2166,7 +2339,7 @@ class StoreOps(object):
     def _tie_output_to_read(self, val):
         """A NAME READ IS ONE INTERNED EXPRESSION (notes/75 §1): the store of
         a local read earlier in the block is made from that read's node and
-        carries ITS `node[36]`.  `mb_n29.vert`'s `vs_TEXCOORD1 = u_xlatu2` is
+        carries ITS `node[36]`.  `0078_mb_n29.vert`'s `vs_TEXCOORD1 = u_xlatu2` is
         seq 225, between the first address MUL that read `u_xlatu2` (222) and
         its LDB (227), and prints right after the MULs.
 
@@ -2191,12 +2364,12 @@ class StoreOps(object):
     def _output_self_move(self, val, src, _mov, _ds, _sw):
         """The temp's own store is `_flush`'s: a NEW lowering vreg for the
         instruction, the name at its statement (notes/74 §2) --
-        `mb_n26.vert`'s tangent MUL is vreg 107, its name 63."""
+        `0078_mb_n26.vert`'s tangent MUL is vreg 107, its name 63."""
         _sb = self.values.get(val)
         if (_ds == ".x" and _sw is not None and tuple(_sw) == (0, 0, 0, 0)
                 and not ENV.get("G2S_SCALARSWFLUSH")):
             # a SCALAR's selector is `.x` in every lane -- no selection: the
-            # dot's temp stored to a float output (`sb_c.vert`'s `on =
+            # dot's temp stored to a float output (`0109_sb_c.vert`'s `on =
             # dot(n, u_xlat2.xyz)`) flushes into its own name, a vreg of its
             # own (vr 28 against the DP3's 47)
             _sw = None
@@ -2222,7 +2395,7 @@ class StoreOps(object):
         elif val in self.arm_names and not ENV.get("G2S_ARMSELFMOVE"):
             # A SELECT'S RESULT IS NO TEMP OF THIS STATEMENT EITHER: the ARMS
             # store it (`_is_statement_temp_store` says the same for a local
-            # store, `mb_n24.vert`), so the output store has nothing to
+            # store, `0077_mb_n24.vert`), so the output store has nothing to
             # rename.  `post_sky_dlss_mask.frag` stores the `(b) ? 1.0 : 0.0`
             # of an IF/ELSE to `result_color1.x` and the compiler prints
             # only the store.  `G2S_ARMSELFMOVE=1` restores the line.

@@ -32,7 +32,7 @@ def _output_kind(module, model, vid, kout):
         # Tessellation control has two output kinds and the Patch decoration
         # picks between them: `gl_TessLevelInner` and `gl_TessLevelOuter`
         # are Patch and take 0xbd, everything else is per-vertex and takes
-        # 0xb7 (measured on ts_ctrl.tesc).
+        # 0xb7 (measured on 0007_ts_ctrl.tesc).
         return (TESC_PATCH_KIND
                 if module.decoration(vid, Decoration.Patch) is not None
                 else TESC_PER_VERTEX_KIND)
@@ -131,7 +131,7 @@ def interface_bindings(module, entry_name="main"):
         # A COMPUTE program's interface is its built-in inputs, kind 0x68,
         # and the declaration printer `f_7100bd4810` (py/binding.py) has no
         # arm for that kind -- `binding_form(0x68, slot)` is empty for every
-        # slot -- so they print no ATTRIB line (notes/111: `cb_a.comp` reads
+        # slot -- so they print no ATTRIB line (notes/111: `0111_cb_a.comp` reads
         # all five and prints none; `cp_a`..`cp_g` read none).  Anything
         # else live in Input/Output is refused.
         _live = _live_ids(module)
@@ -423,8 +423,19 @@ def declarations(module, entry_name="main"):
 
     sbo, cbuf = _buffer_bindings(module)
     _refuse_atomic_counters(module)
-    out = ["STORAGE sbo_buf%d[] = { program.storage[%d] };" % (b, b)
-           for b in sorted(sbo)]
+    # SHARED MEMORY comes before STORAGE (`post_tonemap_update.comp`):
+    #     SHARED_MEMORY 512;
+    #     SHARED shared_mem[] = { program.sharedmem };
+    # 512 is the variable's size in BYTES -- 128 elements of one uint.
+    # (notes/124 §2)
+    from glasmlib.varblock import _shared_arrays
+    _sh = _shared_arrays(module)
+    out = []
+    if _sh:
+        out.append("SHARED_MEMORY %d;" % (4 * sum(n for _n, _v, n in _sh)))
+        out.append("SHARED shared_mem[] = { program.sharedmem };")
+    out += ["STORAGE sbo_buf%d[] = { program.storage[%d] };" % (b, b)
+            for b in sorted(sbo)]
     out += ["CBUFFER buf%d[] = { program.buffer[%d] };" % (b, b)
             for b in sorted(cbuf)]
     out += attrib_block(module, entry_name)

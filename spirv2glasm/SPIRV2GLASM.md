@@ -143,7 +143,7 @@ not convert: 72 bindless shaders with no sampler to pair with, 3 using
 `GL_NV_bindless_texture`, 1 with a std140 alignment error
 (`corpus/README.md`).
 
-`probes/mkprobes.py` remains, and is complementary rather than a substitute: a
+`probes/0000_mkprobes.py` remains, and is complementary rather than a substitute: a
 probe whose only difference from its neighbour is `vec4` against `vec3`
 isolates one decision, which is what makes a *rule* readable, while the corpus
 is what says the rules hold at scale.

@@ -20,14 +20,14 @@ from glasmlib.operands import _scalar_value, _constant_operand, \
     _constant_source, _type_width
 from glasmlib.text import _COMPONENTS, _emit, _swizzle, _source
 from glasmlib.boolean import _bool_normalise, _COMPARISON_OPERATORS, \
-    _BOOL_REPR_CODE
+    _BOOL_REPR_CODE, _bool_constant
 from glasmlib.lower.core import _is_placeholder
 from glasmlib import nodes
 
 _IDENTITY = (0, 1, 2, 3)
 # A scalar operand read by a wider op broadcasts through `.x`: a temp, an
 # input attribute, or a scalar constant forwarded from a local's store
-# (`lc_a.frag`'s `u_xlat1 = 3.0; .. u_xlat0 * u_xlat1`: `MUL.F32 R0, R0,
+# (`0097_lc_a.frag`'s `u_xlat1 = 3.0; .. u_xlat0 * u_xlat1`: `MUL.F32 R0, R0,
 # {3, 0, 0, 0}.x;`, the form a constant operand takes directly).
 # (lex.py `is_broadcastable`)
 
@@ -76,16 +76,20 @@ _INT_BINARY = frozenset((Op.OpIAdd, Op.OpISub, Op.OpIMul, Op.OpBitwiseOr,
                          Op.OpBitwiseXor, Op.OpBitwiseAnd))
 
 # OPCODES THE CHAIN NAMES WHOSE SHAPE IS NOT ONE WHOLE-VECTOR INSTRUCTION.
-# Measured, not assumed: `int_ishl_i.frag`, `int_ishr_i.frag` and
-# `int_ushr_u.frag` print four scalar lines each, component `w` first; and
-# OpSDiv, from `int_idiv.frag`'s emit list: four nodes of ONE opcode -- 0x87,
+# Measured, not assumed: `0038_int_ishl_i.frag`, `0038_int_ishr_i.frag` and
+# `0038_int_ushr_u.frag` print four scalar lines each, component `w` first; and
+# OpSDiv, from `0038_int_idiv.frag`'s emit list: four nodes of ONE opcode -- 0x87,
 # which the namer spells `DIV.S` -- with destination masks 0xff000000,
 # 0xff0000, 0xff00, 0xff, one vreg between them and one `node[36]` across all
 # four.  An INTEGER divide is scalarised; a float divide is the RCP + MUL
-# shape of `op_div.vert` instead, which is why they share an IR opcode (0x85)
+# shape of `0038_op_div.vert` instead, which is why they share an IR opcode (0x85)
 # and not a lowering.
+# `OpUDiv` is `OpSDiv`'s shape exactly, MEASURED (notes/114 \u00a753):
+# `0114_ud_a.frag` prints four scalar `DIV.U` lines, component `w` first, with
+# the divisor swizzled per component and the dividend bare -- the same four
+# nodes of one opcode the signed divide gives.
 _SCALARISED = frozenset((Op.OpShiftRightLogical, Op.OpShiftRightArithmetic,
-                         Op.OpShiftLeftLogical, Op.OpSDiv))
+                         Op.OpShiftLeftLogical, Op.OpSDiv, Op.OpUDiv))
 
 _CONVERT = {Op.OpConvertSToF: "I2F.S", Op.OpConvertUToF: "I2F.U"}
 _FLOAT_TO_INT = (Op.OpConvertFToU, Op.OpConvertFToS)
@@ -93,7 +97,7 @@ _FLOAT_TO_INT = (Op.OpConvertFToU, Op.OpConvertFToS)
 # The commutative add and multiply, whose constant operand goes second.
 # The binary ops the canonicaliser f_710005f810 orders (notes/102 §6): for
 # ADD, AND, MUL and OR (with DP2..4, MIN, MAX, POW, MAD, DP2A elsewhere) a
-# CONSTANT source goes second (0x5f890..0x5f8a0).  `cn_b.frag`: `12 & a.x`
+# CONSTANT source goes second (0x5f890..0x5f8a0).  `0102_cn_b.frag`: `12 & a.x`
 # prints `AND.S R1.x, fragment.attrib[0], {12, 0, 0, 0};`.
 _COMMUTATIVE = (Op.OpIAdd, Op.OpFAdd, Op.OpIMul, Op.OpFMul,
                 Op.OpBitwiseAnd, Op.OpBitwiseOr)
@@ -105,7 +109,7 @@ _MULTIPLIES = (Op.OpIMul, Op.OpFMul)
 _BINARY = frozenset((Op.OpFAdd, Op.OpFSub, Op.OpFMul))
 
 # STRUCTURED CONTROL FLOW's float comparisons: a table read off listings
-# (`SGT.F32` in `cf_if.vert`, `SLT.F32` in `fr_discard.frag`).  Fitted, so a
+# (`SGT.F32` in `0026_cf_if.vert`, `SLT.F32` in `0011_fr_discard.frag`).  Fitted, so a
 # comparison the chain does not name is refused.
 _COMPARE = frozenset((Op.OpFOrdGreaterThan, Op.OpFOrdGreaterThanEqual,
                       Op.OpFOrdLessThan, Op.OpFOrdLessThanEqual,
@@ -140,13 +144,13 @@ class ArithOps(object):
 
     def _arm_matrix_times_vector(self, ins):
         """ONE BLOCK PER COLUMN, and within a block the order is forced by
-        the dependence chain: `if_mat.vert`'s stamps give four blocks, each
+        the dependence chain: `0000_if_mat.vert`'s stamps give four blocks, each
         holding `0x3b` (the load), `0x47` (a copy of it), `0x90` (the column
         scaled by the vector's component) and, past the first, `0x83`
         accumulating into the running sum.
 
         A REGISTER EACH, but NOT band temps: every one of these dies into the
-        next line, and `if_mat.vert` is `2 R-regs` -- the running sum and the
+        next line, and `0000_if_mat.vert` is `2 R-regs` -- the running sum and the
         column being loaded.  A band temp is live to the end of its block and
         would take twelve."""
         if ins.opcode != Op.OpMatrixTimesVector:
@@ -210,7 +214,7 @@ class ArithOps(object):
     def _arm_negating_multiply(self, ins):
         """A MULTIPLY BY MINUS ONE IS A NEGATE (notes/83): the folder turns
         `x * -1` into the negate node, and that prints the negate's carrier
-        MOV (`_arm_negate`), integer and float alike.  `pn_a.frag`: `k * -1`
+        MOV (`_arm_negate`), integer and float alike.  `0083_pn_a.frag`: `k * -1`
         -> `MOV.S R0.x, -fragment.attrib[0];`, `a.x * -1.0` -> `MOV.F R2.x,
         -fragment.attrib[1];`, while `k * -2` stays a `MUL.S`.
         `map_15393bbe`'s `int(b) * int(0xffffffffu)` is one."""
@@ -244,7 +248,7 @@ class ArithOps(object):
         makes `t = -x` a statement, and the assignment's carrier MOV
         (0xf11530) takes the modified operand.  A carrier folds into its
         source only when the read has no modifier (f_7100032c30), so this one
-        stays, and every consumer reads the MOV: `sc_negadd.frag` prints
+        stays, and every consumer reads the MOV: `0067_sc_negadd.frag` prints
             MOV.F R0, -fragment.attrib[0];
             ADD.F32 R1, R0, {0.5, 0.5, 0.5, 0.5};
         No `_computation` refusal: this MOV is the one the stores used to make
@@ -281,7 +285,8 @@ class ArithOps(object):
         derived = (_opchain.mnemonic(name, _glasm_type_code(module, _tid))
                    if _tid is not None
                    and _opchain.OPERATOR.get(name) is not None else None)
-        if derived is None and op == Op.OpSDiv and _tid is not None:
+        if (derived is None and op in (Op.OpSDiv, Op.OpUDiv)
+                and _tid is not None):
             # The chain's own opcode for `OpSDiv` is 0x85, which no namer
             # spells; the lowering's is 0x87, read off the emit list.
             derived = self._mnemonic_of(nodes.DIV,
@@ -291,6 +296,26 @@ class ArithOps(object):
     def _arm_arithmetic(self, ins):
         op = ins.opcode
         derived, _rt = self._derived(ins)
+        if (op == Op.OpUMod and derived is not None
+                and not ENV.get("G2S_NOUMOD")):
+            # `OpUMod` IS SCALARISED (notes/114 \u00a756).  Every `MOD.U` in
+            # the corpus is one component and prints its second operand's
+            # SELECTOR -- `MOD.U R0.x, R8.y, {3, 0, 0, 0}.x;` -- which is
+            # the scalarised form's operand 1, "a single-component selector
+            # it always prints" (`_scalarised`).  Emitted whole we wrote the
+            # constant bare and the line differed by that suffix alone.
+            #
+            # A VECTOR one is REFUSED rather than emitted through the same
+            # path: `0114_md_a.frag` shows the compiler putting each lane in a
+            # SCRATCH `.x` and gathering (`MOD.U R2.x, ..w, ..w;` then
+            # `MOV.U R0.w, R2.x;`), which is NOT the shifts' lane-direct
+            # shape, and no corpus shader has one to read it from.
+            if _components(self.module, ins.result_type) != 1:
+                raise NotEstablished(
+                    "a vector OpUMod: the compiler puts each lane in a "
+                    "scratch and gathers, which no corpus shader shows")
+            self._scalarised(ins, derived)
+            return True
         if derived is not None and op in _SCALARISED:
             self._scalarised(ins, derived)
             return True
@@ -328,7 +353,7 @@ class ArithOps(object):
           * operand 1 carries a single-component selector and always prints
             it: `{5, 0, 0, 0}.x`, `{3, 4, 0, 0}.y`, `fragment.attrib[0].y`.
 
-        EMITTED LOW COMPONENT FIRST.  On `int_ishl_i.frag` the four `0x9b`
+        EMITTED LOW COMPONENT FIRST.  On `0038_int_ishl_i.frag` the four `0x9b`
         nodes carry destination masks `0xff000000`, `0xff0000`, `0xff00`,
         `0xff` IN THAT ORDER -- all naming ONE vreg -- and all four carry
         `seq=1`, so pass 1 is what reverses them, and what this owes the
@@ -344,10 +369,20 @@ class ArithOps(object):
         _a0 = self.values.get(args[0])
         _b0 = self.values.get(args[1])
         _bc = _constant_operand(module, args[1]) if _b0 is None else None
+        # A CONSTANT OPERAND 0 IS NOT FOLDED AWAY and prints BARE, with no
+        # component: `post_tonemap_histogram.comp` shifts a constant zero
+        # and the oracle still emits the instruction --
+        #     SHR.U R1.x, {0, 0, 0, 0}, {2, 0, 0, 0}.x;
+        # -- against operand 1, which always carries its selector.  (§)
+        _a0const = _a0 is not None and _a0.startswith("{")
         if (_a0 is None or (_b0 is None and _bc is None)
-                or _a0.startswith(("-", "|", "{"))
+                or (_a0.startswith(("-", "|", "{")) and not _a0const)
                 or (_b0 is not None and _b0.startswith(("-", "|", "{")))
                 or not _nres or _nres > 4):
+            if ENV.get("G2S_SHDBG"):
+                import sys as _s
+                print("SHDBG op=%d a0=%r b0=%r bc=%r n=%r" % (
+                    op, _a0, _b0, _bc, _nres), file=_s.stderr)
             raise NotEstablished(
                 "opcode %d: emitted one component at a time, and this one's "
                 "operands are not a value and a value or constant" % op)
@@ -357,6 +392,8 @@ class ArithOps(object):
             module, module.constants[args[1]].result_type) == 1
 
         def _lane_a(c):
+            if _a0const:
+                return _a0                  # a constant prints bare
             return _a0 if _cma[c] == c else "%s.%s" % (
                 _a0, _COMPONENTS[_cma[c]])
 
@@ -397,10 +434,10 @@ class ArithOps(object):
             raise NotEstablished("a binary op whose operand has no form")
         # A ONE-COMPONENT VALUE READ BY A WIDER OP broadcasts: its selector is
         # slot 0 for every component, printed `.x` like any swizzle against
-        # the result's width (`pu_b.vert`'s `a * s`: `MUL.F32 R0,
+        # the result's width (`0075_pu_b.vert`'s `a * s`: `MUL.F32 R0,
         # vertex.attrib[0], R1.x;`, R1 the scalar LDC).  Values with a
         # component map already print it through `_source`; a plain scalar
-        # register had none -- and a scalar INPUT neither (`lp_of.vert`'s
+        # register had none -- and a scalar INPUT neither (`0091_lp_of.vert`'s
         # `t * n`, `n` a float attribute, prints `vertex.attrib[2].x`).
         if _nres and _nres > 1:
             a, b = [self._broadcast(_v, _t, _nres)
@@ -440,9 +477,9 @@ class ArithOps(object):
                 and args[1] not in module.constants
                 and not ENV.get("G2S_NOCONSTSECOND")):
             # A CONSTANT GOES SECOND in a commutative add or multiply
-            # (notes/90): `bv_n60.vert`'s `vec2(-1.0, -1.0) + vpSize_g.xy`
+            # (notes/90): `0090_bv_n60.vert`'s `vec2(-1.0, -1.0) + vpSize_g.xy`
             # prints `ADD.F32 R2.xy, R1, {-1, -1, 0, 0};`, and the divide's
-            # `vec2(1.0) / a.xy` multiplies `R0, {1, 1, 0, 0}` (`dv_c.frag`).
+            # `vec2(1.0) / a.xy` multiplies `R0, {1, 1, 0, 0}` (`0090_dv_c.frag`).
             args = [args[1], args[0]]
         _nres = _components(module, ins.result_type)
         a, b = self._binary_operands(ins, args, _nres)
@@ -455,7 +492,7 @@ class ArithOps(object):
             # is not.  `map_9a0b11a0`'s `u_xlat4.xyz * u_xlat5.xxx`, right
             # after `u_xlat5.x = inversesqrt(..)`, enters it as (0x2b, 0x7c)
             # and a hardware watch on the slot sees the swap there: `MUL.F32
-            # R22.xyz, R13.x, R19;`.  `ms_a.frag`, whose `.xxx` is a name
+            # R22.xyz, R13.x, R19;`.  `0106_ms_a.frag`, whose `.xxx` is a name
             # read (0x2b, 0x2b), keeps its order.
             a, b = b, a
         # notes/41: the destination's write mask is the result's component
@@ -480,7 +517,7 @@ class ArithOps(object):
             # every such compare (notes/64 §6), whatever reads it.  The
             # compare's own node is a lowering temp; the move's destination
             # is the value's (`cf_loop`: SLT vreg 9, the MOV vreg 4;
-            # `sc_select.frag`: SLT R0, TRUNC R3).
+            # `0067_sc_select.frag`: SLT R0, TRUNC R3).
             _cmp = self._fresh()
             self.lines.append(_emit(derived, _cmp + _ds, a, _neg + b))
             self.lines.extend(_bool_normalise(module, ins.result, _cmp, dst,
@@ -494,7 +531,7 @@ class ArithOps(object):
 
     def _clamp(self, ins):
         """GLSL.std.450 FClamp.  MEASURED, not read off a listing: the emit
-        list of `un_clamp.vert` is TWO nodes, `0x8e` then `0x8d`, both
+        list of `0048_un_clamp.vert` is TWO nodes, `0x8e` then `0x8d`, both
         full-mask (py/data/extinst_shape.json), and the image's namer gives
         `MIN.F` and `MAX.F` for them.  `clamp(x, lo, hi)` is `max(lo,
         min(hi, x))`, which is the only decomposition into a min then a max,
@@ -506,7 +543,7 @@ class ArithOps(object):
 
         THE WRITE MASK IS THE RESULT'S WIDTH (notes/41), and a CONSTANT GOES
         SECOND in the commutative MIN and MAX as in an add or multiply
-        (notes/90 §2): `bl_280.vert`'s `clamp(u_xlat24, 0.0, 1.0)` prints
+        (notes/90 §2): `0091_bl_280.vert`'s `clamp(u_xlat24, 0.0, 1.0)` prints
         `MIN.F R4.x, R3, {1, 0, 0, 0};` and `MAX.F R2.x, R4, {0, 0, 0, 0};`
         (notes/91)."""
         module = self.module
@@ -568,7 +605,7 @@ class ArithOps(object):
         # flag clear and source 1 with it set (0x5c788: w5 = 1, w6 = 1); the
         # source printer f_710003e48c hands `w6 & 1` to the swizzle printer
         # (vt[192], f_710003e9c0), which then names the component even for
-        # the identity.  `dv_d.frag`: `DIV.F32 R2.x, fragment.attrib[0],
+        # the identity.  `0102_dv_d.frag`: `DIV.F32 R2.x, fragment.attrib[0],
         # R1.x;` (`map_601ecbf6`'s `x / U.s`: `R2.x`, the scalar LDC)
         if (_lex.is_broadcastable(b) and not b.startswith(("{", "-{"))
                 and not ENV.get("G2S_BAREDIVISOR")):
@@ -576,7 +613,7 @@ class ArithOps(object):
         return _emit(mn, dst + ".x", a, b)
 
     def _divide(self, ins):
-        """MEASURED from the emit list of `op_div.vert`, not from its
+        """MEASURED from the emit list of `0038_op_div.vert`, not from its
         listing: a divide is FIVE nodes -- four `0x7b` with destination masks
         0xff000000, 0xff0000, 0xff00, 0xff in that order, each reading ONE
         component of the divisor (`sel 0x302010<c>/0xff`), then one `0x90`
@@ -598,7 +635,7 @@ class ArithOps(object):
             raise NotEstablished("a divide whose operand has no form")
         if op == Op.OpFDiv and _nres == 1:
             # ONE COMPONENT: the reciprocal and the multiply fold into DIV
-            # (notes/67).  `sc_div.frag`:
+            # (notes/67).  `0067_sc_div.frag`:
             #     DIV.F32 R0.x, fragment.attrib[0], fragment.attrib[0].y;
             dst = self._fresh(True)
             self.lines.append(self._scalar_divide(ins.result_type, dst, a, b))
@@ -620,12 +657,12 @@ class ArithOps(object):
         divide is an RCP of the divisor with the divide's mask and a MUL of
         the dividend by it (f_710005ff20); f_7100060110 leaves an RCP whose
         source selects FEWER THAN TWO distinct components as one node, which
-        f_7100068fd0 then folds with the MUL into DIV (`dv_b.frag`'s `a.xyz /
+        f_7100068fd0 then folds with the MUL into DIV (`0090_dv_b.frag`'s `a.xyz /
         b.www`: `DIV.F32 R1.xyz, fragment.attrib[0], fragment.attrib[1].w;`);
         otherwise the RCP is one node per lane, each reading its component
-        (`dv_a.frag`'s `a.xy / b.zw`: `RCP.F32 R0.y, fragment.attrib[1].w;
+        (`0090_dv_a.frag`'s `a.xy / b.zw`: `RCP.F32 R0.y, fragment.attrib[1].w;
         RCP.F32 R0.x, .. .z; MUL.F32 R1.xy, fragment.attrib[0], R0;`).  A
-        CONSTANT dividend is the MUL's second operand (`dv_c.frag`'s
+        CONSTANT dividend is the MUL's second operand (`0090_dv_c.frag`'s
         `vec2(1.0) / a.xy`: `MUL.F32 R4.xy, R0, {1, 1, 0, 0};`), and a
         constant divisor's components are read like any other's (`RCP.F32
         R0.w, {2, 4, 8, 16}.w;`)."""
@@ -725,8 +762,8 @@ class ArithOps(object):
         self.values[ins.result] = dst
 
     def _divide_four(self, ins, a, b, _nres):
-        """The plain four-component divide of `op_div.vert` (and the mod of
-        `op_mod.vert`).  CREATION ORDER when the scheduler runs: the four
+        """The plain four-component divide of `0038_op_div.vert` (and the mod of
+        `0038_op_mod.vert`).  CREATION ORDER when the scheduler runs: the four
         reciprocals are one vreg, so pass 1 is what prints them highest
         component first; the multiply carries the DIVIDE's own position too
         -- all five nodes read seq 1."""
@@ -761,7 +798,7 @@ class ArithOps(object):
 
     def _mod_tail(self, a, b, dst, _tc, _mul):
         """`mod(x, y) = x - y * floor(x / y)`.  The divide is the same five
-        nodes; what follows is measured from `op_mod.vert`: `FLR` (opcode
+        nodes; what follows is measured from `0038_op_mod.vert`: `FLR` (opcode
         0x6e, which the namer spells outright -- unlike the 0x6c/0x6d
         rounding class it needs no mode), then the multiply back by the
         divisor and a subtract written as an ADD with the operand negated
@@ -784,7 +821,7 @@ class ArithOps(object):
     def _arm_derivative(self, ins):
         """notes/58.  Builtins 0x46b..0x46d and 0x46e..0x470 map to opcodes
         0x68 DDX and 0x69 DDY, whole-vector with no mask (notes/39).
-        `fr_ddx.frag` measures them on SCALAR operands -- one instruction
+        `0051_fr_ddx.frag` measures them on SCALAR operands -- one instruction
         into `.x`, like the dot -- and `fwidth` as the front end
         expands it: DDX and DDY, each materialised through an absolute-value
         MOV (the carrier of notes/47), and an ADD of the two.  Each derivative
@@ -802,8 +839,8 @@ class ArithOps(object):
         _ds = _opchain.dest_suffix(_nres) if _nres else None
         _tc = _glasm_type_code(module, ins.result_type)
         # A VECTOR derivative is ONE instruction at the result's mask, its
-        # operand read through its selector (`dd_a.frag`: `DDX.F32 R1.xy,
-        # fragment.attrib[0];`, `dd_d.frag` a whole `DDX.F32 R0, ..`).
+        # operand read through its selector (`0096_dd_a.frag`: `DDX.F32 R1.xy,
+        # fragment.attrib[0];`, `0096_dd_d.frag` a whole `DDX.F32 R0, ..`).
         a = (_source(self.values, self.comps, args[0]) if _nres == 1
              else _source(self.values, self.comps, args[0], _nres))
         if a is None or _ds is None:
@@ -822,11 +859,11 @@ class ArithOps(object):
         else:
             dst = self._fwidth(a, _ds, _ddx, _ddy, _mv, _add)
             if not ENV.get("G2S_FWIDTHGROUP"):
-                # THE FRONT END'S EXPANSION IS THREE STATEMENTS: `ds_b.frag`
+                # THE FRONT END'S EXPANSION IS THREE STATEMENTS: `0108_ds_b.frag`
                 # (`d = fwidth(t)` stored to a local) has DDX and its carrier
                 # at seq 24, DDY and its carrier 26, and the ADD 28 with the
                 # store and the temp's flushes -- so the store's statement
-                # starts at the ADD, not at the DDX (`dd_e.frag`: 2, 4, 6).
+                # starts at the ADD, not at the DDX (`0096_dd_e.frag`: 2, 4, 6).
                 self.defline[ins.result] = len(self.lines) - 1
         self.values[ins.result] = dst
         if _nres == 1:
@@ -837,7 +874,7 @@ class ArithOps(object):
     def _fwidth(self, a, _ds, _ddx, _ddy, _mv, _add):
         """`fwidth` as the front end expands it: DDX and DDY, each through
         an absolute-value carrier MOV sharing its `node[36]`, and their ADD
-        (`fr_ddx.frag` scalar, `dd_e.frag` a vec2)."""
+        (`0051_fr_ddx.frag` scalar, `0096_dd_e.frag` a vec2)."""
         _abs = []
         for _mn in (_ddx, _ddy):
             _t = self._fresh(True)
@@ -872,14 +909,14 @@ class ArithOps(object):
         if (args[0] in module.constants and args[1] not in module.constants
                 and not ENV.get("G2S_NOCONSTSECOND")):
             # A CONSTANT GOES SECOND, as in a commutative add or multiply
-            # (`dt_d.frag`'s `dot(vec2(0.5, 0.25), a.zw)`: `DP2.F32 R0.x,
+            # (`0098_dt_d.frag`'s `dot(vec2(0.5, 0.25), a.zw)`: `DP2.F32 R0.x,
             # fragment.attrib[0].zwzw, {0.5, 0.25, 0, 0};`)
             args = [args[1], args[0]]
         src = self._operand_type(args[0])
         if src is None or src.opcode != Op.OpTypeVector:
             raise NotEstablished("a dot whose operand is not a vector")
         _dw = src.operands[2]
-        # a CONSTANT operand prints at its own width, padded (`dt_a.frag`:
+        # a CONSTANT operand prints at its own width, padded (`0098_dt_a.frag`:
         # `DP3.F32 R0.x, fragment.attrib[0], {0.212500006, 0.715399981,
         # 0.0720999986, 0};`)
         a, b = [_source(self.values, self.comps, x, _dw)
@@ -934,7 +971,7 @@ class ArithOps(object):
     def _arm_bitfield_insert(self, ins):
         """`bitfieldInsert(base, insert, offset, bits)` IS ONE NODE, opcode
         0x1b0 (`BFI`), whose sources are, in order, the constant pair
-        `{bits, offset}`, the insert and the base (`bf_a.frag`'s DAG: node
+        `{bits, offset}`, the insert and the base (`0108_bf_a.frag`'s DAG: node
         0x1b0 on a 0x26 constant of mask 0xffff, the insert, then the base;
         `BFI.S R1.x, {4, 4, 0, 0}, fragment.attrib[0], {0, 0, 0, 0};`).  The
         handler is the multi-operand worker f_7100fd1210, not the binary
@@ -964,7 +1001,7 @@ class ArithOps(object):
         # a lane of a construct made in this block reads its source, as any
         # operand does (`_con_read`): the slice's `chr_hair_0dc59a05` builds
         # an ivec3 of three BFIs and inserts into its `.x` -- `BFI.S R1.x,
-        # {4, 0, 0, 0}, R6, R3;`, R3 the first BFI (`bf_c.frag`)
+        # {4, 0, 0, 0}, R6, R3;`, R3 the first BFI (`0000_bf_c.frag`)
         _cr = ((lambda x: _drop_x_for_scalar(self._con_read(x), _nres))
                if not ENV.get("G2S_NOBFICON") else (lambda x: None))
         base = (_cr(args[0]) or _source(self.values, self.comps, args[0], _nres)
@@ -982,12 +1019,89 @@ class ArithOps(object):
         self.values[ins.result] = dst
         return True
 
+    def _arm_not(self, ins):
+        """`~x` IS ONE WHOLE-VECTOR NODE, opcode 0x77 (`NOT`).
+
+        `0114_bn_a.frag`'s DAG is a single 0x77 of mask 0xffffffff on the
+        attribute and the listing is `NOT.U R0, fragment.attrib[0];`; the
+        signed form (`0114_bn_c.frag`) is `NOT.S`, so the suffix is the type
+        code's as everywhere else.  The image's chain does not name `OpNot`
+        -- it is not one of the binary worker's -- so the mnemonic is the
+        NODE's, as `_arm_bitfield_insert`'s is.  It is NOT scalarised: the
+        node's mask is the whole vector, unlike the shifts.
+        `G2S_NONOT=1` refuses it again."""
+        if ins.opcode != Op.OpNot or ENV.get("G2S_NONOT"):
+            return False
+        module = self.module
+        if _signedness(module, ins.result_type) is None:
+            raise NotEstablished("a bitwise NOT on a non-integer type")
+        _mn = self._mnemonic_of(nodes.NOT,
+                                _glasm_type_code(module, ins.result_type))
+        if _mn is None:
+            raise NotEstablished("a bitwise NOT the image's tables do not "
+                                 "name for this type")
+        self._computation()
+        _nres = _components(module, ins.result_type)
+        _a = ins.args()[0]
+        a = (_source(self.values, self.comps, _a, _nres)
+             or _constant_source(module, _a, _nres))
+        if a is None:
+            raise NotEstablished("a bitwise NOT whose operand has no form")
+        dst = self._fresh(True)
+        self.lines.append(_emit(_mn, dst + _opchain.dest_suffix(_nres), a))
+        self.values[ins.result] = dst
+        return True
+
+    def _arm_bitfield_extract(self, ins):
+        """`bitfieldExtract(base, offset, bits)` IS ONE NODE, opcode 0x1af
+        (`BFE`) -- `_arm_bitfield_insert`'s sibling without the insert
+        operand.  Its sources are, in order, the constant pair
+        `{bits, offset}` and the base: `0114_bn_b.frag`'s DAG is 0x1af on a 0x26
+        constant and the attribute, and prints `BFE.U R0.x, {5, 3, 0, 0},
+        fragment.attrib[0];` (`0114_bn_c.frag` gives the signed `BFE.S`).
+
+        Measured only for a SCALAR result with CONSTANT offset and count --
+        the only forms the corpus has; anything else is refused.
+        `G2S_NOBFE=1` refuses it again."""
+        if ins.opcode not in (Op.OpBitFieldUExtract, Op.OpBitFieldSExtract) \
+                or ENV.get("G2S_NOBFE"):
+            return False
+        module = self.module
+        args = ins.args()
+        _nres = _components(module, ins.result_type)
+        if _nres != 1 or _signedness(module, ins.result_type) is None:
+            raise NotEstablished("a bitfieldExtract whose result is not one "
+                                 "integer component")
+        _off = _scalar_value(module, args[1])
+        _cnt = _scalar_value(module, args[2])
+        if _off is None or _cnt is None:
+            raise NotEstablished("a bitfieldExtract whose offset or count is "
+                                 "not a constant")
+        _mn = self._mnemonic_of(nodes.BFE,
+                                _glasm_type_code(module, ins.result_type))
+        if _mn is None:
+            raise NotEstablished("a bitfieldExtract the image's tables do "
+                                 "not name for this type")
+        self._computation()
+        _cr = ((lambda x: _drop_x_for_scalar(self._con_read(x), _nres))
+               if not ENV.get("G2S_NOBFICON") else (lambda x: None))
+        base = (_cr(args[0])
+                or _source(self.values, self.comps, args[0], _nres)
+                or _constant_source(module, args[0], _nres))
+        if base is None:
+            raise NotEstablished("a bitfieldExtract whose operand has no form")
+        dst = self._fresh(True)
+        self.lines.append(_emit(_mn, dst + _opchain.dest_suffix(_nres),
+                                "{%s, %s, 0, 0}" % (_cnt, _off), base))
+        self.values[ins.result] = dst
+        return True
+
     def _arm_logical(self, ins):
         """`&&` AND `||` ON BOOLS ARE THE BITWISE NODES ON THE BOOL'S
         REPRESENTATION.  The image's chain maps OpLogicalAnd to 0x84 and
         OpLogicalOr to 0x92, the nodes OpBitwiseAnd/Or map to, and a bool is
         held in its representation type (U32, notes/64 §4: `f_710005f2d0`
-        rewrites 0x84/0x92 only for a FLOAT representation).  `la_a.frag`'s
+        rewrites 0x84/0x92 only for a FLOAT representation).  `0105_la_a.frag`'s
         fold dump: `u_xlatb0 && u_xlatb1` is node 0x84, type 0xc, on the two
         bools' values in operand order -- `AND.U R1.x, R3, R2;`."""
         op = ins.opcode
@@ -1014,9 +1128,48 @@ class ArithOps(object):
         self.values[ins.result] = dst
         return True
 
+    def _arm_logical_not(self, ins):
+        """`!b` on a bool: the compare against zero that every bool
+        normalisation uses, then the negate that puts it in the bool
+        representation -- `SEQ.U t.x, b, {0,0,0,0}; MOV.U r.x, -t;`.
+
+        A normalised bool is 0 or -1, so `b == 0` negated is exactly the
+        logical complement, and it is the same two-step
+        (compare, `MOV .. -value`) that `_bool_normalise` reads for every
+        comparison.  `instance_cull_plant_grow.comp` is the shader.
+        `G2S_NOLOGICALNOT=1` refuses it again.  (notes/123 §1)
+        """
+        if ins.opcode != Op.OpLogicalNot or ENV.get("G2S_NOLOGICALNOT"):
+            return False
+        module = self.module
+        self._computation()
+        _nres = _components(module, ins.result_type)
+        _seq = _opchain.mnemonic("OpIEqual", _BOOL_REPR_CODE)
+        _mv = _opchain.mnemonic_for_opcode(nodes.MOV, _BOOL_REPR_CODE)
+        if _seq is None or _mv is None or _seq.startswith("<")                 or _mv.startswith("<"):
+            raise NotEstablished(
+                "a logical not whose compare or move the image does not name")
+        _a = (_source(self.values, self.comps, ins.args()[0], _nres)
+              or _constant_source(module, ins.args()[0], _nres))
+        if _a is None:
+            raise NotEstablished("a logical not whose operand has no form")
+        _ms = "" if _nres != 1 else ".x"
+        _t = self._fresh(True)
+        self.lines.append(_emit(_seq, _t + _ms, _a,
+                                _bool_constant(False)))
+        dst = self._fresh(True)
+        self.lines.append(_emit(_mv, dst + _ms, "-%s" % _t))
+        self.values[ins.result] = dst
+        # THE RESULT IS ALREADY THE BOOL REPRESENTATION, so a branch on it
+        # gets no normalising move of its own: `f_7100030e20` appends that
+        # move to a COMPARISON (0x30f30..0x30fe8), and this is not one --
+        # the negate above has already put the value in the representation.
+        self.normalised.add(ins.result)
+        return True
+
     def _arm_any(self, ins):
         """`any(bvecN)` IS A CHAIN OF ORs on the bool's representation, lane
-        by lane: `any_a.frag` (a bvec4 compare) prints
+        by lane: `0000_any_a.frag` (a bvec4 compare) prints
             OR.U  R1.x, R4, R4.y;
             OR.U  R1.x, R1, R4.z;
             OR.U  R2.x, R1, R4.w;
@@ -1067,20 +1220,20 @@ class ArithOps(object):
 
     def _arm_convert(self, ins):
         """A CONVERSION, and both results BAND temps (notes/52 section 8):
-        `int_iadd.frag` is `ADD.S R0, ..; I2F.S R1, R0;` -- the conversion
+        `0031_int_iadd.frag` is `ADD.S R0, ..; I2F.S R1, R0;` -- the conversion
         does not reuse its dying source's register because the band is one
         temp per front-end IR operation (`tools/bandsize.py` measures
-        `int_iadd.frag`'s at 2 for its two SPIR-V values).
+        `0031_int_iadd.frag`'s at 2 for its two SPIR-V values).
 
         The destination takes the count table's mask like every other
-        operation (notes/41): `ld_i1.frag` prints `I2F.S R0.x, R0;`, the
+        operation (notes/41): `0070_ld_i1.frag` prints `I2F.S R0.x, R0;`, the
         corpus `I2F.U R16.xyz, R0.zwyw;`.
 
         FLOAT TO INTEGER: the cast is a MOV with an integer destination and a
         float source, which the MOV legaliser f_7100bdefd0 (0xbf030..0xbf188)
         turns into TRUNC with modifier 4, typed by the DESTINATION -- the
-        same reading `_bool_normalise` uses.  `pf_a.frag` prints `TRUNC.S R0,
-        fragment.attrib[0];`, `pf_b.frag` `TRUNC.U R0, ...`."""
+        same reading `_bool_normalise` uses.  `0086_pf_a.frag` prints `TRUNC.S R0,
+        fragment.attrib[0];`, `0086_pf_b.frag` `TRUNC.U R0, ...`."""
         op = ins.opcode
         if not (op in _CONVERT or (op in _FLOAT_TO_INT
                                    and not ENV.get("G2S_NOF2I"))):
@@ -1090,7 +1243,7 @@ class ArithOps(object):
         _nres = _components(module, ins.result_type)
         _ds = _opchain.dest_suffix(_nres) if _nres else None
         # a component of a construct made in this block is read from its
-        # source, as every operand's (`_con_read`): `cv_a.frag`'s
+        # source, as every operand's (`_con_read`): `0103_cv_a.frag`'s
         # `float(u_xlati0.y)` right after `u_xlati0 = ivec2(..)` prints
         # `I2F.S R2.x, R1;` (`monster_02d3d44e`: `I2F.S R2.x, R6;`)
         a = (_drop_x_for_scalar(self._con_read(ins.args()[0]), _nres)
@@ -1139,12 +1292,12 @@ class ArithOps(object):
             0x114a5d2 / 0x11548ed, chosen by the source's and the result's
             base types) and stores the call into a named temp
             (0xfda8d0..0xfda948).  It prints as a MOV of the RESULT's type,
-            one per component (`bc_fi.frag`: `MOV.F R0.x,
+            one per component (`0072_bc_fi.frag`: `MOV.F R0.x,
             fragment.attrib[0];`, `bc_fs` `MOV.S`, `bc_fu` `MOV.U`, `bc_ubo`
             `MOV.F R0.x, R0;`);
           * anything else goes to the generic handler (0xfda9b0: f_7100fcf420
             with 0x7c), a cast that prints as a MOV with the SOURCE's suffix,
-            whole-vector (`bc_attr.vert`: `MOV.U R0, vertex.attrib[0];` for
+            whole-vector (`0072_bc_attr.vert`: `MOV.U R0, vertex.attrib[0];` for
             uvec4 -> ivec4, `bc_iu` `MOV.S R0, ...` the other way, `bc_sbo`
             `MOV.U R3.x, R1;`).
         Only a same-width reinterpretation is taken; anything else would move
@@ -1175,7 +1328,7 @@ class ArithOps(object):
             if _nres != 1:
                 raise NotEstablished(
                     "a float/integer bitcast of a vector: the builtin is "
-                    "scalarised and assembled (bc_uf4.vert), not read")
+                    "scalarised and assembled (0072_bc_uf4.vert), not read")
             _tc = _glasm_type_code(module, ins.result_type)
         else:
             _tc = _glasm_type_code(module, src_t)
@@ -1189,7 +1342,7 @@ class ArithOps(object):
         # A COMPONENT OF A CONSTRUCT MADE IN THIS BLOCK is read from its
         # source here too -- the same reading `_vector_bitcast` already
         # makes for each of its scalarised components (`_con_lane`,
-        # `cx_a.frag`).  `particle_fog_block_init.comp`: the compiler
+        # `0102_cx_a.frag`).  `particle_fog_block_init.comp`: the compiler
         # prints `MOV.S Rn.x, Rm;` from the lane's own register where we
         # printed the construct's lane.  `G2S_NOBITCASTCON=1` reads it.
         _cl = (self._con_lane(self.values.get(src_id),
@@ -1205,7 +1358,7 @@ class ArithOps(object):
         """THE BUILTIN IS SCALARISED AND ASSEMBLED (notes/87): each component
         is a scalar bitcast -- a MOV with the RESULT's suffix into a temp's
         `.x`, as the scalar form -- and the vector is a construct of the
-        four, component 0 forwarded to its reader.  `bc_uf4.vert`: `MOV.F
+        four, component 0 forwarded to its reader.  `0072_bc_uf4.vert`: `MOV.F
         R0.x, vertex.attrib[0];` .. `MOV.F R3.x, vertex.attrib[0].w;`, then
         `MOV.F R4.x, R0;` `MOV.F R4.w, R3.x;` .."""
         _tc = _glasm_type_code(self.module, ins.result_type)
@@ -1231,7 +1384,7 @@ class ArithOps(object):
                 flat.append((_t, 0))
                 continue
             # a component of a CONSTRUCT made in this block is read from its
-            # source, as any lane read of one is (`_con_read`; `cx_a.frag`'s
+            # source, as any lane read of one is (`_con_read`; `0102_cx_a.frag`'s
             # `floatBitsToInt(u_xlat0.yzw)` right after `u_xlat0 = vec4(..)`
             # prints `MOV.S R4.x, R0;`, R0 what `MOV.F R7.y, R0.x;` wrote)
             _cl = (self._con_lane(_b, _cm[_k])

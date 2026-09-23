@@ -7,7 +7,7 @@ flattened arms; anything that is not a read shape is refused.
 """
 from spvnames import Op
 
-from glasmlib.common import NotEstablished, KILLS
+from glasmlib.common import NotEstablished, KILLS, Op, ENV
 
 # The merge labels of the loops being walked, innermost last: a branch to the
 # top one from inside an arm is a `break`.
@@ -125,8 +125,8 @@ def _const_arm(cond):
     component equal (0xef7ee0..0xef7f08), 0xef8f68 returns `[40]` (the else)
     when the first component is zero and `[32]` (the then) otherwise
     (0xef8f84..0xef8f98) -- the other arm is dropped.  `g2s_trace_regs` at
-    0xef8f84 fires on `lp_wbrk.vert`'s `while (true)` condition (the static
-    true constant) and never on `lp_fbrk.vert`'s `i < 4`.
+    0xef8f84 fires on `0071_lp_wbrk.vert`'s `while (true)` condition (the static
+    true constant) and never on `0071_lp_fbrk.vert`'s `i < 4`.
 
     Returns "then" or "else".
     """
@@ -155,7 +155,7 @@ def _switch_chain(term, merge, order, byid, head):
         f_7100fb0c40 holds its body aside ([96], 0xfb0c80) to be the
         INNERMOST else, wherever the default sits in the body.
 
-    `g2s_trace_irtree` on `cf_switch.vert` shows the result: `if (k == 0)
+    `g2s_trace_irtree` on `0046_cf_switch.vert` shows the result: `if (k == 0)
     {..} else { if (k == 1) {..} else {default} }`, with the default block
     first in the SPIR-V.  The compare is an expression used directly as the
     condition, not a stored bool (the IF emitter's `("switch", ...)` form).
@@ -241,7 +241,7 @@ def _headed_by(ins, term, opcode, merge_opcode):
 def _break_arm(sub):
     """A `break`: the arm leaves the innermost loop.  The compiler prints it
     as the loop exit's own conditional BRK on a constant true inside the IF
-    (`lp_fbrk.vert`, `lp_wbrk.vert`: `IF NE.x; MOV.U.CC RC.x, {1, 0, 0, 0};
+    (`0071_lp_fbrk.vert`, `0071_lp_wbrk.vert`: `IF NE.x; MOV.U.CC RC.x, {1, 0, 0, 0};
     BRK (NE.x); ENDIF;`), the same lowering as the loop condition's ELSE arm
     (notes/64 §5, notes/71)."""
     sub[-1] = (sub[-1][0], sub[-1][1][:-1] + [_Marker("BREAK")])
@@ -254,11 +254,33 @@ def _continue_arm(sub, has_else):
     assignment `flag = 1.0` to a flag temp of cgc type 0x2b (f_7100f5aab0 /
     f_7100f53ac0, 0xfafd04..0xfafd80) and what follows is guarded by
     `if (flag == 0)` (operator 0x2b, 0xfafc10..0xfafc70); the flag is set to
-    0 at the loop body's top.  `g2s_trace_wstmt` on `lp_wcont.vert` shows
-    exactly that IR.  Only the probed shape is taken: a then-arm with no
-    else, at the loop body's own level, once per body."""
+    0 at the loop body's top.  `g2s_trace_wstmt` on `0071_lp_wcont.vert` shows
+    exactly that IR.
+
+    NEITHER "ONCE PER BODY" NOR "AT THE BODY'S OWN LEVEL" is a restriction
+    the compiler has (notes/122 §1): 0xfafcfc reuses the loop's flag temp if
+    it already exists, and the guard is built around the statement list OF
+    THE LEVEL BEING WALKED.  An ELSE arm is still refused -- what the kind-7
+    handler does with one is not read.  `G2S_NOCONTDEEP=1` restores the two
+    lifted restrictions."""
     top = _LOOP_CONTS[-1]
-    if has_else or top["used"] or _WALK_DEPTH[0] != top["depth"]:
+    if ENV.get("G2S_CONTDBG"):
+        import sys as _s
+        print("CONTDBG has_else=%r used=%r depth=%r topdepth=%r" % (
+            has_else, top["used"], _WALK_DEPTH[0], top["depth"]),
+            file=_s.stderr)
+    # NEITHER "ONCE" NOR "AT THE BODY'S OWN LEVEL" IS IN THE COMPILER
+    # (notes/122 §1).  `f_7100fafca0` at 0xfafcfc tests whether the loop's
+    # flag temp ALREADY EXISTS and creates it only when it does not
+    # (0xfafd04), then assigns `flag = 1.0` at 0xfafd4c-0xfafd84 -- so a
+    # second continue in one body reuses the flag rather than being a new
+    # shape.  And the guard is built at 0xfafc10..0xfafc70 around `*(168)`,
+    # the statement list OF THE LEVEL BEING WALKED, which is what
+    # `CFLAG_TEST` already does here for whatever level found the continue.
+    # An ELSE arm is still refused: the kind-7 handler is reached for an arm
+    # holding a continue, and what an else arm does there is not read.
+    if has_else or (ENV.get("G2S_NOCONTDEEP")
+                    and (top["used"] or _WALK_DEPTH[0] != top["depth"])):
         raise NotEstablished(
             "a continue in a shape not read: only one "
             "if-without-else at the loop body's level")
@@ -281,12 +303,35 @@ def _selection_arms(lv, bounds, merge, has_else):
             raise NotEstablished("an empty branch arm")
         if last.opcode in KILLS:
             pass                        # the arm ends the shader
+        elif (last.opcode in (Op.OpReturn, Op.OpReturnValue,
+                              Op.OpUnreachable)
+                and not ENV.get("G2S_NORETARM")):
+            # AN ARM THAT RETURNS ends the shader too, and the compiler
+            # prints it inside the IF: `debug_mask_sky.frag`'s
+            # `if (b) { SV_Target0 = vec4(0.0); return; }` is
+            #     IF    NE.x;
+            #     MOV.F result_color0, {0, 0, 0, 0};
+            #     RET   (TR);
+            #     ENDIF;
+            # and the body continues after the ENDIF.  That is the same
+            # shape `KILLS` already takes -- an arm that does not reach the
+            # merge because it leaves the shader -- and `_arm_return`
+            # already emits the `RET`.  `G2S_NORETARM=1` refuses it again.
+            pass
         elif _LOOP_MERGES and _is_branch_to(last, _LOOP_MERGES[-1]):
             _break_arm(sub)
         elif _LOOP_CONTS and _is_branch_to(last, _LOOP_CONTS[-1]["cont"]):
             _continue_arm(sub, has_else)
             continues = True
         elif not _is_branch_to(last, merge):
+            if ENV.get("G2S_ARMDBG"):
+                import sys as _s
+                print("ARMDBG last=%s args=%s merge=%s loopmerges=%s "
+                      "conts=%s" % (getattr(last, "opcode", None),
+                                    last.args() if last is not None else None,
+                                    merge, _LOOP_MERGES,
+                                    [c["cont"] for c in _LOOP_CONTS]),
+                      file=_s.stderr)
             raise NotEstablished(
                 "a branch arm that does not join at the merge")
         armblocks.append(sub)
@@ -395,7 +440,7 @@ def _loop(lv, ins, term):
     # The condition block's branch is the reader's `if (c) {body} else
     # break`; on a constant `c` the simplifier keeps one arm (`_const_arm`).
     # `while (true)` / `for (;;)` keep the body with no IF around it
-    # (`lp_wbrk.vert`).  A constant false would leave the bare `break` -- a
+    # (`0071_lp_wbrk.vert`).  A constant false would leave the bare `break` -- a
     # shape with no probe, so refused.
     kept = _const_arm(ct.args()[0])
     if kept == "else":
@@ -408,7 +453,7 @@ def _loop(lv, ins, term):
     body, used = _loop_body(merge, cont, sub)
     if used:
         # The flag's `= 0` is the body's first IR statement
-        # (`g2s_trace_wstmt`, lp_wcont.vert).  Where the continue block's own
+        # (`g2s_trace_wstmt`, 0071_lp_wcont.vert).  Where the continue block's own
         # code would go relative to the guard, and where the init sits when
         # the loop's condition is not folded away, have no probe: both
         # refused.

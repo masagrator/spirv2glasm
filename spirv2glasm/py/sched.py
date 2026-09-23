@@ -209,7 +209,7 @@ _IMEM = "IMEM"
 def _pass1_extra_defs(it):
     """Pass 1's extra writes: a storage image's handle loaded AT ITS OpLoad
     (the `@w` tag, glasmlib/lower/image.py `_image_handle`) is a statement
-    of its own, and the image op after it waits on it -- `si_e.comp`'s pass
+    of its own, and the image op after it waits on it -- `0110_si_e.comp`'s pass
     1 lists that handle's load (t68 16) between the next op's own handle
     load (0) and the LOADIM (32), which is the LOADIM releasing it; as a
     plain operand of the STORE far below it would be listed last."""
@@ -269,7 +269,7 @@ def _texture_2d_mask(s, mk):
     """A 2D SAMPLE READS TWO COMPONENTS of its coordinate (notes/87): lanes x
     and y, whatever the operand's width.  Reading all four made a vec2
     coordinate's `.zw` live from the program's entry -- never written -- and
-    it met every temp in the graph (`mq_n22e.frag`, the corpus's
+    it met every temp in the graph (`0000_mq_n22e.frag`, the corpus's
     `map_010c7104`)."""
     return _texture_2d_lanes(s, mk, (0, 1))
 
@@ -298,13 +298,13 @@ def _lane_mask(base, dmask, s, mk):
     AN UNSWIZZLED SOURCE IS READ THROUGH THE WRITE MASK.  `MOV.F R1.yzw, R1;`
     moves y to y, z to z and w to w -- it does not read `.x` -- and that is
     what keeps it independent of the `MOV.F R1.x, ...` beside it, which is
-    what `lo_parts.vert`'s pair needs (their `node[36]` are 2 and 4 and the
+    what `0052_lo_parts.vert`'s pair needs (their `node[36]` are 2 and 4 and the
     self-copy prints first, which only happens when pass 1 sees no edge
     between them).  The MOV family always; a dot product writes one
     component and reads all of them, and so do the texture instructions.
 
     The other lane-wise ops too, on a narrower write: `MUL.F32 #80.xyz, #75,
-    #27;` does not read `#27.w` (`mc_n14.vert`, where the stray `.w` read
+    #27;` does not read `#27.w` (`0080_mc_n14.vert`, where the stray `.w` read
     made pass 1's implicit-read owner wait on itself).
 
     A FOUR-LETTER SWIZZLE ON A NARROWER WRITE reads only the lanes the write
@@ -326,7 +326,7 @@ def _lane_mask(base, dmask, s, mk):
 
 def _dot_mask(width, s):
     """A DP3 READS THREE COMPONENTS, a DP2 two: the rest of an operand is not
-    live through it.  `mb_n18.vert`'s `u_xlat4`, stored whole and then read
+    live through it.  `0077_mb_n18.vert`'s `u_xlat4`, stored whole and then read
     only by `DP3.F32 .., vertex.attrib[1], #48;`, conflicts with the later
     temps in `.xyz` alone in the compiler's graph (`g2s_ifg`,
     `tools/ifgjoin.py`)."""
@@ -343,16 +343,28 @@ def parse(line):
 
     LOCAL MEMORY IS ONE NAME (notes/84): every element store into `lmem0[i]`
     writes `lmem0` whole and every indexed load reads it whole.  That is the
-    compiler's graph for `lm_icb.frag` -- the four element stores chained by
+    compiler's graph for `0071_lm_icb.frag` -- the four element stores chained by
     kind-0 edges in creation order, and the load after the LAST one only
     (each store kills the one before).  AN ELEMENT STORE ALSO READS THE
     ARRAY: the elements it does not write pass through it.  The compiler's
-    pass 1 for `lm_icb.frag` lists the stores 0, 1, 2, 3 first (`entry[68]`
+    pass 1 for `0071_lm_icb.frag` lists the stores 0, 1, 2, 3 first (`entry[68]`
     0..48) and the element temps last, which is what the release gives only
     when each store waits on the next one as a reader waits on its
     producer."""
     m = _lex.split_line(line)
     if m is None:
+        # AN OPERAND-LESS INSTRUCTION (`MEMBAR.CTA;`, `BAR ;`) is still an
+        # item: it writes nothing and reads nothing, so it carries no edge
+        # and the scheduler places it by its `seq` alone.  That is what the
+        # listing shows -- `particle_fog_sort.comp` puts an unrelated
+        # `SHR.U` BETWEEN `BAR ;` and `MEMBAR.CTA;`, so a barrier is not a
+        # scheduling fence.  Without this the line does not parse and the
+        # whole body is refused.  (notes/119 §2)
+        _b = line.strip()
+        if _b.endswith(";"):
+            _b = _b[:-1].strip()
+            if _b and all(c.isalnum() or c in "._" for c in _b):
+                return _b, _split(""), []
         return None
     mnem, dst, rest = m
     base = mnem.split(".")[0]
@@ -365,7 +377,7 @@ def parse(line):
                                    if _t[2] else 0xF)]
     srcs = _top_level_operands(rest)
     if base in _TEXTURE_OPS:
-        # THE HANDLE IS RELEASED FIRST (notes/61): in `fr_texlod.frag` the
+        # THE HANDLE IS RELEASED FIRST (notes/61): in `0033_fr_texlod.frag` the
         # handle load sits AFTER the coordinate's construct in pass 1's list,
         # which is the reverse of the picks -- so the image node hands its
         # handle to the release before its coordinate.
@@ -385,7 +397,7 @@ def parse(line):
         # (notes/111).  The release takes the COORDINATE, then the HANDLE,
         # then the TEXEL -- pass 1's list is the reverse of the release:
         # `st6.frag` (`tools/gsum.py`) lists the handle load at t68 0 and
-        # the coordinate's TRUNC at 16, `hl_b.comp` the texel's LDB at 0 and
+        # the coordinate's TRUNC at 16, `0111_hl_b.comp` the texel's LDB at 0 and
         # the handle load at 16.
         srcs = [srcs[2], srcs[0], srcs[1], srcs[3]]
     tex2d = (base == "TEX" and srcs and srcs[-1].strip() == "2D"
@@ -406,7 +418,7 @@ def parse(line):
         # A STORAGE-BUFFER STORE writes the buffer and READS its value (the
         # first operand) at the store's width -- `STB.F32X4 R0, sbo_buf1[16];`
         # reads R0 whole, `STB.U32 R0, ..` its `.x` -- and the address's
-        # carrier (`st_a`..`st_g.comp`)
+        # carrier (`st_a`..`0109_st_g.comp`)
         _vm = (0x3 if mnem.endswith("X2") else 0xF if mnem.endswith("X4")
                else 0x1)
         _ops = _top_level_operands(dst + ("," + rest if rest else ""))
@@ -415,14 +427,14 @@ def parse(line):
         vn, _vk = _split(_val)
         _o = [] if _val.strip().startswith("{") else [(vn, _vm)]
         # ... AND THE BUFFER ITSELF, after its value and address: the stores
-        # into one buffer are a chain (`tools/gsum.py cb_a.comp`: each STB
+        # into one buffer are a chain (`tools/gsum.py 0111_cb_a.comp`: each STB
         # has a kind-0 edge to the next), and pass 1 lists the five stores
         # in creation order, each after its gather -- the release of a store
         # hands on its value and THEN the store before it (notes/111).
         # `G2S_STBNOCHAIN=1` drops the read.
         _mem = ([] if _os.environ.get("G2S_STBNOCHAIN")
                 else [(_bn, 0xF)])
-        # THE ADDRESS IS HANDED TO THE RELEASE BEFORE THE VALUE: `cb_b.comp`
+        # THE ADDRESS IS HANDED TO THE RELEASE BEFORE THE VALUE: `0111_cb_b.comp`
         # (`buf.d[id.x] = id.y`) lists MUL, the value's gather, then the
         # carrier -- the release took the carrier first (notes/111)
         if _os.environ.get("G2S_STBVALUEFIRST"):
@@ -449,7 +461,7 @@ def parse(line):
         out.append((_cc_name(_pm[0], _pm[1]),
                     _mask_of_letters(_pm[2]) if _pm[2] else d[1]))
         # ... and its own destination LAST, after the value it writes
-        # (notes/114 §20): `sv_d.frag`'s node 0.5 (`tools/gsum.py`) lists
+        # (notes/114 §20): `0114_sv_d.frag`'s node 0.5 (`tools/gsum.py`) lists
         # `srcs=0.4,0.3,0.2` -- the condition, the MUL it writes, and the
         # const its destination already held.
         if _os.environ.get("G2S_PREDSELFEARLY"):
@@ -471,7 +483,7 @@ def parse(line):
             mk = _texture_2d_lanes(s, mk, _TXL_2D_LANES)
         if _lmem_name(nm) is not None:
             # THE ADDRESS IS RELEASED FIRST, as a TEX's handle is: in
-            # `lm_icb.frag`'s pass 1 the index carrier sits AFTER the last
+            # `0071_lm_icb.frag`'s pass 1 the index carrier sits AFTER the last
             # element store (`entry[68]` 64 against 48), the reverse of the
             # picks, so the load hands its address to the release before the
             # array.
@@ -488,17 +500,17 @@ def parse(line):
     out.extend(_inner_reads(dst))
     if base in _IMAGE_MEMORY_OPS:
         # THE IMAGE MEMORY (notes/111): an image load or store reads and
-        # writes it, a handle load reads it -- `tools/gsum.py`: `si_d.comp`
+        # writes it, a handle load reads it -- `tools/gsum.py`: `0110_si_d.comp`
         # has kind-0 edges handle load -> the next LOADIM, LOADIM -> the
         # next handle load and the next LOADIM, and none between two handle
-        # loads; `si_b.comp`'s first handle load has none to the STOREIM
+        # loads; `0110_si_b.comp`'s first handle load has none to the STOREIM
         # (the LOADIM between wrote it).  An image op's read is its FIRST
         # release: `st5.comp`'s pass 1 lists the two stores in order, and
-        # `si_b.comp`'s LOADIM, both the STOREIM's texel and the memory it
+        # `0110_si_b.comp`'s LOADIM, both the STOREIM's texel and the memory it
         # wrote, is released at the texel as before.
         out.insert(0, (_IMEM, 1))
     elif mnem == "LDC.U64" and _IMAGE_MEMORY_OPS:
-        # a handle load reads it too, after its address: `si_e.comp`'s pass
+        # a handle load reads it too, after its address: `0110_si_e.comp`'s pass
         # 1 lists the LOADIM before the next handle load (t68 32, 48), the
         # load releasing it
         out.append((_IMEM, 1))
@@ -512,9 +524,9 @@ def _reads_merge(items, j, name, smask):
     just before it is the component write (glasm.py builds the pair in that
     order).  A read that covers the WRITTEN component takes the stored value,
     which is both halves.  The walker's DAG then has the copy as a producer,
-    a kind-0 edge copy -> reader.  `pt_c.vert` shows this: `a.xyz = p; a.w =
+    a kind-0 edge copy -> reader.  `0073_pt_c.vert` shows this: `a.xyz = p; a.w =
     1.0; dot(a, b)` prints `MOV.F R2.xyz, R2; MOV.F R2.w, {1..}.x;` and only
-    then the DP4.  A read of the OTHER components only (`lo_parts.vert`'s
+    then the DP4.  A read of the OTHER components only (`0052_lo_parts.vert`'s
     `result.position.x` beside `v.w = ...`) finds no write to them in the
     block and reads the name at block entry, which is the kind-2 edge
     reader -> copy (notes/55 §7).
@@ -591,6 +603,11 @@ def _passthru_masks(items):
     return out
 
 
+def _reads_whole(mnem):
+    """Forms that read the whole operand whatever they write (`ifg.py`)."""
+    return mnem.split(".")[0].startswith(("DP", "TEX", "TXL", "TXF", "LD"))
+
+
 def edges(items, passthru=frozenset(), with_made=False):
     """Def-use and anti-dependence edges, by the rule at 0x4ac2c.
 
@@ -634,6 +651,17 @@ def edges(items, passthru=frozenset(), with_made=False):
             continue
         _mnem, (dst, dmask), srcs = it
         for name, smask in srcs:
+            # A COMPONENT-WISE INSTRUCTION READS AN UNSWIZZLED SOURCE
+            # THROUGH ITS WRITE MASK (notes/114 \u00a775).  `ifg.py`'s
+            # `positions()` already applies this -- "a dot product and the
+            # memory and texture forms read the whole operand whatever they
+            # write" -- and `edges()` did not, so `MOD.U R0.x, R2, {3..}.x`
+            # counted as reading all of R2 and took a write-after-read edge
+            # to the `.yz` pass-through beside it, which the compiler's MOD
+            # does not have.  `G2S_NOSRCNARROW=1` reads the whole operand.
+            if (smask == 0xF and dmask and not _reads_whole(_mnem)
+                    and not _os.environ.get("G2S_NOSRCNARROW")):
+                smask = dmask
             g.read_after_write(i, name, smask)
         # AFTER THE SLOT LOOP, as 0x49a24 adds them: the reader's own kind-0
         # key, so they sort with the edges its sources made.
@@ -666,13 +694,24 @@ class _EdgeBuilder(object):
         self.defs = {}              # name -> [(mask, index)...] live defs
         self.reads = {}             # name -> [(mask, index)...] since that def
         self.war = {}               # (reader, name) -> [(writer, mask)...]
+        # the ASSEMBLED READ, as `_live_reads` computes it (notes/114
+        # \u00a743): the lanes of one destination are one read in the
+        # compiler, so they are asked together whether they take the merge.
+        self.grp = {}
+        if not _os.environ.get("G2S_NOGRPREAD"):
+            for _it in items:
+                if _it is None or not _it[1][0]:
+                    continue
+                for _n, _sm in _it[2]:
+                    _k = (_it[1][0], _n)
+                    self.grp[_k] = self.grp.get(_k, 0) | _sm
 
     def add(self, a, b, when):
         """PUSHED AT THE HEAD.  `f_710004ab80` builds `entry[56]` by pushing,
         so a node's successor list is the reverse of the order the edges were
         made in -- and the release walks it in that order, which is what
         decides which of two newly-ready nodes the selector's scan meets
-        first (`co_add1.vert`: the store and the construct's first component
+        first (`0052_co_add1.vert`: the store and the construct's first component
         both become ready on the same release).
 
         WHEN is the sweep's own order (notes/51 §8, 0x4b3ec / 0x4b5c0): the
@@ -698,7 +737,8 @@ class _EdgeBuilder(object):
             if not mask & smask:
                 continue
             if j in self.passthru:
-                _p = _reads_merge(self.items, j, name, smask)
+                _p = _reads_merge(self.items, j, name, smask | self.grp.get(
+                    (self.items[i][1][0], name), 0))
                 if not (_p is not None and any(k == _p for _m2, k in live)):
                     self.add(i, j, (1, self.n - i))
                     continue
@@ -711,7 +751,7 @@ class _EdgeBuilder(object):
         components this line is about to overwrite must issue BEFORE it;
         getting this edge backwards groups every component copy together and
         separates it from the store that reads it, which is what
-        `op_mul.vert` showed."""
+        `0011_op_mul.vert` showed."""
         for mask, j in self.reads.get(dst, ()):
             if mask & dmask:
                 self.add(j, i, self._war_key(i, j, dst, dmask, mask))
@@ -733,7 +773,7 @@ class _EdgeBuilder(object):
         if _WARLATER:
             return (1, n - j, len(_sj) - 1 - _s, n - i)
         # WITHIN ONE SOURCE, BY COMPONENT: the writer of the source's
-        # lowest overlapping component first (notes/110 §3).  `rc_g.frag`'s
+        # lowest overlapping component first (notes/110 §3).  `0109_rc_g.frag`'s
         # MUL reads `R0` whole, and the compiler's list (`tools/gsum.py`,
         # node 0.4) is `w, z, y` writes and then the `.x` gather, all kind
         # 2 -- made x, y, z, w, though the `.x` gather is the EARLIEST of
@@ -776,7 +816,7 @@ class _EdgeBuilder(object):
         `x` again, and the compiler's list (`tools/gsum.py`, node 18.5) is the
         LDC, `.w`, `.z`, `.xy` -- made `.xy` (which keeps `x` and `y`), `.z`,
         `.w`, and the LDC last, though the LDC's own component is the lowest
-        of the four.  `probes/wk_d.frag` and `probes/rc_g.frag`, where no
+        of the four.  `probes/0110_wk_d.frag` and `probes/0109_rc_g.frag`, where no
         writer covers another, are the component order as before.
         `G2S_NOWAROWN=1` keeps each writer's own lowest component.
         """
@@ -866,7 +906,7 @@ def _successor_count_pass2(succ, npred, t68):
     The selector is a SCAN, not a sort (notes/51 §4): it replaces the running
     best when the candidate's `node[36]` is smaller OR -- failing that -- its
     `entry[68]` is smaller.  That is an OR of two tests, not a lexicographic
-    pair, and the difference is visible: on `fr_mrt.frag` the lexicographic
+    pair, and the difference is visible: on `0044_fr_mrt.frag` the lexicographic
     version emits the unmodified store first and the compiler emits it last.
 
     The cycle clock advances one step per issue (`cg[28] = cg[24] << 4`), and
@@ -921,9 +961,9 @@ def _successor_count_pass2(succ, npred, t68):
 #     and picked from the TAIL, and each pick releases the operands it reads.
 #     The picks are then reversed (`f_7100030c74` pushes at the front), and
 #     `entry[68]` is 16 times the position in that reversed list.
-#   * `node[36]` IS PER VREG, NOT PER LINE.  Measured on `co_mul4.vert`, whose
+#   * `node[36]` IS PER VREG, NOT PER LINE.  Measured on `0053_co_mul4.vert`, whose
 #     four component writes of one `vec4` all carry seq 7 while the multiplies
-#     that feed them carry 1, 4, 5 and 6; on `co_mix4.vert` three of the four
+#     that feed them carry 1, 4, 5 and 6; on `0052_co_mix4.vert` three of the four
 #     carry seq 1.  A line index gives them four DIFFERENT keys and the
 #     selector then resolves them the wrong way round.  Running before the
 #     allocator is what makes this available: each value still has its own
@@ -1088,6 +1128,26 @@ def _live_reads(items, span, groups=None, passthru=frozenset()):
     defs = {}
     ptdefs = {}                     # name -> [(mask, line)] live pass-throughs
     _ptm = _passthru_masks(items)   # components a whole store passes through
+    # THE ASSEMBLED READ (notes/114 \u00a743).  `_reads_merge` asks whether a
+    # read covers a component the block STORED, and that is the mask of the
+    # SOURCE's read, not of one lowered line.  A value assembled lane by lane
+    # -- the condition-code moves of a vector select -- is ONE read in the
+    # compiler: one 0x57 node over the lanes, each lane reading the merge
+    # through it.  So the lanes are asked TOGETHER, by the destination they
+    # assemble.  `0114_m1.frag` (`a.xzxz`, a read spanning the stored lane) reads
+    # the merge; `0114_m2.frag` (`a.xxxx`, the carried lane alone) reads the name
+    # at block entry and is the copy's implicit read -- both READ off the
+    # compiler's own DAG, not off a listing.  `G2S_NOGRPREAD=1` asks each
+    # lowered line for itself again.
+    _grp = {}
+    if not _os.environ.get("G2S_NOGRPREAD"):
+        for _i2 in span:
+            _it2 = items[_i2]
+            if _it2 is None or not _it2[1][0]:
+                continue
+            for _n2, _sm2 in _it2[2]:
+                _k2 = (_it2[1][0], _n2)
+                _grp[_k2] = _grp.get(_k2, 0) | _sm2
     for i in span:
         it = items[i]
         if it is None:
@@ -1102,8 +1162,8 @@ def _live_reads(items, span, groups=None, passthru=frozenset()):
                 if (name == _IMEM and _mnem == "LDC.U64"
                         and items[j][0] == "LDC.U64"):
                     # a handle load waits on the image ops before it, not
-                    # on a handle loaded at its OpLoad (`si_b.comp`,
-                    # `si_e.comp`: the op's own handle load is listed
+                    # on a handle loaded at its OpLoad (`0110_si_b.comp`,
+                    # `0110_si_e.comp`: the op's own handle load is listed
                     # first, the earlier-loaded one second)
                     continue
                 if mask & smask:
@@ -1112,8 +1172,9 @@ def _live_reads(items, span, groups=None, passthru=frozenset()):
             # a read covering a component store's WRITTEN component takes
             # the merge, pass-through half included (`_reads_merge`)
             for mask, j in ptdefs.get(name, ()):
-                _p = _reads_merge(items, j, name, smask) if mask & smask \
-                    else None
+                _p = _reads_merge(items, j, name,
+                                  smask | _grp.get((dst, name), 0)) \
+                    if mask & smask else None
                 if _p is not None and any(k == _p for _m, k
                                           in defs.get(name, ())):
                     pairs.append((j, i))
@@ -1172,7 +1233,7 @@ def _memory_pairs(items, span):
     IT IS NOT ALIAS-AWARE.  Every load in the shader that forced this out
     reads `sbo_buf0` and every store writes `sbo_buf1`, so the two can never
     collide, and the compiler orders them anyway.  It does not partition by
-    the value type `node[44]` either: `st_f.comp` has an `LDC.F32X4` (type 6)
+    the value type `node[44]` either: `0109_st_f.comp` has an `LDC.F32X4` (type 6)
     released by an `STB.U32` (type 12).
 
     IMAGE STORES ARE NOT IN IT: `STOREIM` is op 0x2c, not 0x3c, and carries
@@ -1208,19 +1269,19 @@ def _implicit_read_pairs(groups, passthru, items=None):
     register read of a name at block entry is FOLDED into one reader, its
     owner -- the last one created -- and every other reader of that same
     read releases the owner after its slots, as if it read it.
-    `lo_parts.vert`: the merge's copy half releases `result.position.x`'s
+    `0052_lo_parts.vert`: the merge's copy half releases `result.position.x`'s
     MOV.
 
     WHICH READER CARRIES THEM (notes/65): the one whose `node[120]` group is
     set, and that is the merge's COPY -- the pass-through half of the local's
     store.  It releases every other reader of the same entry read.
-    `lo_parts.vert` cannot tell this from "the last reader created owns it"
+    `0052_lo_parts.vert` cannot tell this from "the last reader created owns it"
     (the copy precedes `result.position.x` there); the geometry probes can:
-    `g01.geom`'s copy (seq 35) releases the gather (seq 30) that was created
+    `0046_g01.geom`'s copy (seq 35) releases the gather (seq 30) that was created
     BEFORE it (notes/51, "The implicit reads").
 
     The owner releases the other readers LAST CREATED FIRST: the list is
-    built by pushing at its head, as `entry[56]` is (0x4acf0).  `mb_n17.vert`
+    built by pushing at its head, as `entry[56]` is (0x4acf0).  `0077_mb_n17.vert`
     has two other readers of one entry read -- the DP3s of `u_xlat0.x =
     dot(N, u_xlat3.xyz)` and `u_xlat3.x = dot(T, u_xlat3.xyz)` -- and the
     compiler's pass 1 lists them DP3(N), DP3(T), i.e. released T first
@@ -1230,10 +1291,10 @@ def _implicit_read_pairs(groups, passthru, items=None):
     the hook's group one -- `node[120]` is zero on every node below, `irx=
     none`): the releaser takes its register row `node[92]` in `program[816]`
     and, for each component k it WRITES (`node[48+k]`, x first), releases
-    every record on that row's list k.  `ab_a.frag`'s copy `MOV R4.xyz, R4`
+    every record on that row's list k.  `0105_ab_a.frag`'s copy `MOV R4.xyz, R4`
     releases `abs(u_xlat1.y)` from list y and then `abs(u_xlat1.z)` from list
     z -- the creation order, where one list newest-first would give the
-    reverse and print the two carriers the wrong way round.  `mb_n17.vert`'s
+    reverse and print the two carriers the wrong way round.  `0077_mb_n17.vert`'s
     copy (yzw) carries `irr=T,N,T,N` -- the DP3s read xyz, so they are on
     lists y and z and on none for w -- and the store's WRITE half (`.x`)
     carries `irr=T,N` from list x.  Neither half is on its own lists: the
@@ -1241,7 +1302,7 @@ def _implicit_read_pairs(groups, passthru, items=None):
     the one-list reading.
 
     AND EVERY WRITE OF THE NAME WALKS THEM, not only a component store's two
-    halves (notes/106): `ow_a.frag`'s `o.w = u_xlat0; u_xlat0 = u_xlat0 *
+    halves (notes/106): `0106_ow_a.frag`'s `o.w = u_xlat0; u_xlat0 = u_xlat0 *
     c7` -- the store `MOV #2.x, #17` releases the entry readers of `.x`, the
     MUL and then the output lane, newest first, and that is the compiler's
     pass-1 list (the lane at `entry[68]` 32, the MUL 48).
@@ -1320,12 +1381,12 @@ def _order_entries(order_v, by_v, span, band):
     `band[1]` gives each destination its key, (0, statement) for a name and
     (1, first write) otherwise.  A key given as `(name, line)` holds only in
     the block that line is in: a local stored whole in one block and merged
-    in a later one keeps its first-write place in the first (`pb_b.frag`).
+    in a later one keeps its first-write place in the first (`0085_pb_b.frag`).
 
     The older form of `band` maps name -> lowering vreg: A FLUSHED TEMP'S
     NAME (notes/67 §7) is numbered where its value was made -- the name's
     record precedes the lowering vreg the instruction writes
-    (`sc_select.frag`: the name vreg 2, the TRUNC vreg 9) -- so its entry
+    (`0067_sc_select.frag`: the name vreg 2, the TRUNC vreg 9) -- so its entry
     takes the lowering vreg's place, ahead of it."""
     if isinstance(band, tuple) and band and band[0] == "vkey":
         _first = dict((v, by_v[v][0]) for v in order_v)
@@ -1374,8 +1435,20 @@ def _release_walk(span, pairs, order_v, by_v):
         for j in reads.get(p, ()):
             _decrement(j)
     if len(picked) != len(span):
+        if _os.environ.get("G2S_STUCK"):
+            import sys as _sys
+            _left = [i for i in span if i not in set(picked)]
+            print("STUCK release walk left %d of %d: %s"
+                  % (len(_left), len(span), _left[:8]), file=_sys.stderr)
+            _sub = [(a, b) for a, b in pairs if a in _left and b in _left]
+            print("   cycle edges: %s" % [
+                (a, b, "/".join(_PAIR_SRC.get((a, b), ["?"])))
+                for a, b in _sub], file=_sys.stderr)
         return None
     return picked
+
+
+_PAIR_SRC = {}
 
 
 def _pass1(items, span, seq, passthru=frozenset(), band=None):
@@ -1383,8 +1456,23 @@ def _pass1(items, span, seq, passthru=frozenset(), band=None):
     picks reversed (`f_7100030c74` pushes at the front)."""
     groups = {}
     pairs = _live_reads(items, span, groups, passthru)
-    pairs.extend(_implicit_read_pairs(groups, passthru, items))
-    pairs.extend(_memory_pairs(items, span))
+    _p_live = list(pairs)
+    _p_impl = _implicit_read_pairs(groups, passthru, items)
+    _p_mem = _memory_pairs(items, span)
+    pairs.extend(_p_impl)
+    pairs.extend(_p_mem)
+    # `G2S_STUCK=1`: why the scheduler refused.  It prints the span that
+    # could not be placed, which pass gave up, the lines left unpicked and
+    # the CYCLE between them, each edge tagged with the list that made it
+    # (live / implicit / memory).  notes/129 is what it was written for.
+    if _os.environ.get("G2S_STUCK"):
+        _PAIR_SRC.clear()
+        for _e in _p_live:
+            _PAIR_SRC.setdefault(_e, []).append("live")
+        for _e in _p_impl:
+            _PAIR_SRC.setdefault(_e, []).append("impl")
+        for _e in _p_mem:
+            _PAIR_SRC.setdefault(_e, []).append("mem")
     order_v, by_v = _vreg_entries(items, span)
     _order_entries(order_v, by_v, span, band)
     picked = _release_walk(span, pairs, order_v, by_v)
@@ -1394,9 +1482,10 @@ def _pass1(items, span, seq, passthru=frozenset(), band=None):
     if _os.environ.get("G2S_P1DBG"):                   # diagnosis only
         import sys as _sys
         _sys.stderr.write("P1 entries %s\n   by_v %s\n   reads %s\n"
-                          "   order %s\n   items %s\n"
+                          "   order %s\n   seqs %s\n   items %s\n"
                           % (order_v, dict((v, by_v[v]) for v in order_v),
                              pairs, picked,
+                             [(i, seq[i] if i < len(seq) else None) for i in span],
                              [(i, items[i]) for i in span]))
     return picked
 
@@ -1446,6 +1535,18 @@ def _pass2(items, emitted, seq, t68, succ, npred):
                     work.insert(0, b)
         cycle += 1
     if len(out) != len(span):
+        if _os.environ.get("G2S_STUCK"):
+            import sys as _sys
+            _left = [i for i in span if i not in set(out)]
+            print("STUCK %d of %d unpicked; first few with their "
+                  "unsatisfied preds:" % (len(_left), len(span)),
+                  file=_sys.stderr)
+            _done = set(out)
+            for i in _left[:6]:
+                print("   i=%d count=%d preds_left=%s succ=%s"
+                      % (i, count[i],
+                         [j for j in npred[i] if j in here and j not in _done],
+                         [j for j in succ[i] if j in here]), file=_sys.stderr)
         return None
     return out
 
@@ -1461,8 +1562,8 @@ def _order_pre_flat(lines, allocated=None, cuts=(), ties=(), passthru=(),
     compiler's own split: `node[36]` and the release walk are per value, while
     `entry[56]` is built from nodes that already name a symbol -- so two
     values sharing a register carry a write-after-read edge between them.
-    `co_add1.vert` needs exactly that edge (its construct and its first gather
-    are both `R1`) and `co_mul4.vert`, whose construct has a register to
+    `0052_co_add1.vert` needs exactly that edge (its construct and its first gather
+    are both `R1`) and `0053_co_mul4.vert`, whose construct has a register to
     itself, needs its absence; the two are otherwise identical.
 
     `list_edges` builds pass 2's edges per block over pass 1's LIST, which
@@ -1477,6 +1578,11 @@ def _order_pre_flat(lines, allocated=None, cuts=(), ties=(), passthru=(),
     body, alloc, tail = _strip_terminators(lines, allocated)
     items = _parse_all(body)
     if items is None:
+        if _os.environ.get("G2S_STUCK"):
+            import sys as _sys
+            for _l in body:
+                if parse(_l) is None:
+                    print("STUCK unparsed line: %r" % _l, file=_sys.stderr)
         return None
     eitems = items
     if alloc is not None:
@@ -1495,6 +1601,16 @@ def _order_pre_flat(lines, allocated=None, cuts=(), ties=(), passthru=(),
     for span in _block_spans(items, cuts, names, passthru, frozenset(calls)):
         emitted = _pass1(items, span, seq, passthru, band)
         if emitted is None:
+            if _os.environ.get("G2S_STUCK"):
+                import sys as _sys
+                print("STUCK pass1 failed on span of %d lines (context):"
+                      % len(span), file=_sys.stderr)
+                for _i in range(max(0, span[0] - 8), span[0]):
+                    print("   (%d) %s" % (_i, body[_i]), file=_sys.stderr)
+                for _i in span:
+                    print("   [%d]%s %s"
+                          % (_i, " PT" if _i in passthru else "   ", body[_i]),
+                          file=_sys.stderr)
             return None
         if stage1:
             out.extend(emitted)
@@ -1550,11 +1666,11 @@ def _seq_keys(n, ties):
     measured, one construct at a time, and `ties` names them:
 
       co_mul4/co_mix4   the four component writes of a construct  (seq 7/1)
-      int_ishl.frag     the four scalarised shifts                (seq 1)
-      op_div.vert       the four reciprocals AND the multiply     (seq 1)
+      0038_int_ishl.frag     the four scalarised shifts                (seq 1)
+      0038_op_div.vert       the four reciprocals AND the multiply     (seq 1)
 
     A local's component store is the counter-example that says this cannot
-    be per vreg: `lo_parts.vert` writes `v.<c>` and then self-copies the
+    be per vreg: `0052_lo_parts.vert` writes `v.<c>` and then self-copies the
     other three components into the SAME vreg, and the two carry seq 2 and 4
     -- distinct, and the order of the pair depends on it.
 
@@ -1564,7 +1680,7 @@ def _seq_keys(n, ties):
         # A MEASURED POSITION WINS: a group whose `node[36]` is given (a
         # `Tie` with `seq`) is applied after the plain statement groups, so
         # a statement's group does not flatten the positions measured inside
-        # it -- `sa_b.frag`'s `txVec0 = vec4(..)` store shares the construct
+        # it -- `0099_sa_b.frag`'s `txVec0 = vec4(..)` store shares the construct
         # writes' seq 4 while its gathers keep 6 and 8 (notes/99).
         ties = ([t for t in ties if getattr(t, "seq", None) is None]
                 + [t for t in ties if getattr(t, "seq", None) is not None])
@@ -1632,21 +1748,21 @@ def _register_family_edges(items, emitted, succ, pred, made=None):
     `record[16]` alone, and every colour output is code 207 with its index
     elsewhere, so two colour stores carry a kind-1 (write after write) edge
     in the order of the block's LIST -- pass 1's output, which is what
-    `f_710004b220` sweeps.  `fr_mrt.frag`: `color1` before `color0`.
+    `f_710004b220` sweeps.  `0044_fr_mrt.frag`: `color1` before `color0`.
 
     The same holds for the tessellation PATCH outputs (notes/63):
-    `ts_ctrl.tesc` chains `tessinner[0] -> tessouter[2] -> [1] -> [0]` with
+    `0007_ts_ctrl.tesc` chains `tessinner[0] -> tessouter[2] -> [1] -> [0]` with
     kind-1 edges in pass 1's list order, so the whole `result.patch` family
     is one register to the edge builder.
 
     EVERY VERTEX OUTPUT IS REGISTER CODE 111 (the stamps' row for
     `result.position` and `result.attrib[n]` alike), so the edge builder
-    chains their writes the same way, per component: `mb_n27.vert`'s block
+    chains their writes the same way, per component: `0078_mb_n27.vert`'s block
     18 has the kind-1 edge `attrib[3].xyz` -> `attrib[2].xyz`, in pass 1's
     list order (t68 80 before 144), against creation order (seq 219 after
     213).  The compiler prints `attrib[3]` first.
 
-    THE COLOUR FAMILY IS PER COMPONENT TOO (notes/104 §5): `sw_a.frag`'s
+    THE COLOUR FAMILY IS PER COMPONENT TOO (notes/104 §5): `0104_sw_a.frag`'s
     pass-1 list holds `result_color0` (xyzw), `result_color3.x` and
     `result_color2.w`, and the compiler's DAG (`tools/gsum.py`, row 207)
     has kind-1 edges color0 -> color3.x and color0 -> color2.w and NONE

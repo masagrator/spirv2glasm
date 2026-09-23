@@ -19,7 +19,7 @@ from glasmlib.types import type_spelling
 from glasmlib.operands import _scalar_value
 from glasmlib.semantics import BUILTIN_SEMANTIC, BUILTIN_SLOT, BUILTIN_TYPE, \
     TESC_PATCH_KIND, TESC_PER_VERTEX_KIND, _location_semantic, \
-    _builtin_semantic, _builtin_register
+    _builtin_semantic, _builtin_register, _register
 from glasmlib.usage import _live_ids, _uses_builtin, _unreferenced_block, \
     _member_uses, _member_element_uses, _chain_loaded, _kill_count, \
     _local_arrays
@@ -46,12 +46,14 @@ def semantic_lines(module, entry_name="main"):
     other way would make the two blocks disagree on shaders where the list is
     not sorted.
     """
-    if any(ins.operands[2] == StorageClass.Workgroup
-           for ins in module.globals.values()
-           if ins.opcode == Op.OpVariable):
-        # SHARED MEMORY has a `#semantic <name> : SHARED` line and
-        # `shared_mem[..]` rows of its own (the corpus's
-        # `post_tonemap_update.comp`: `#semantic TGSM0 : SHARED`), not read
+    if (any(ins.operands[2] == StorageClass.Workgroup
+            for ins in module.globals.values()
+            if ins.opcode == Op.OpVariable)
+            and ENV.get("G2S_NOSHAREDMEM")):
+        # SHARED MEMORY is READ and implemented (notes/124 §2): the
+        # `#semantic <name> : SHARED` line, the `shared_mem[0]` rows, the
+        # `SHARED_MEMORY <bytes>` declaration and the `LDS`/`STS`/`ATOMS`
+        # forms.  `G2S_NOSHAREDMEM=1` restores this refusal.
         raise NotEstablished("a Workgroup (shared) variable: its #semantic "
                              "and #var rows are not read")
     blocks, opaques = _blocks_and_opaques(module)
@@ -63,10 +65,109 @@ def semantic_lines(module, entry_name="main"):
             binding = -1
         by_name[name] = "#semantic %s.%s : %s[%d]" % (tname, name, kind,
                                                       binding)
-    out = [by_name[n] for n in _symbol_order(module, entry_name)
-           if n in by_name]
+    out = ["#semantic %s : SHARED" % _n
+           for _n, _v, _e in _shared_arrays(module)]
+    out += [by_name[n] for n in _symbol_order(module, entry_name)
+            if n in by_name]
     out.extend("#semantic %s : __LOCAL" % n
                for n, _t, _v in _local_arrays(module))
+    return out
+
+
+def _shared_arrays(module):
+    """[(name, variable id, element count)] for the Workgroup variables.
+
+    READ off `post_tonemap_update.comp` and `post_tonemap_histogram.comp`,
+    the corpus's only shaders with shared memory (notes/124 §2):
+
+        #semantic TGSM0 : SHARED
+        #var uint TGSM0[0].value[0] :  : shared_mem[0] : -1 : 1
+        SHARED_MEMORY 512;
+        SHARED shared_mem[] = { program.sharedmem };
+
+    Their `TGSM0` is `struct { uint value[1]; } [128]` -- 128 * 4 = 512
+    bytes -- and the row is the SAME `name[0].<member>[0]` shape the
+    storage-buffer rows already use.  Only that shape is taken.
+    """
+    out = []
+    for vid, ins in module.globals.items():
+        if (ins.opcode != Op.OpVariable
+                or ins.operands[2] != StorageClass.Workgroup):
+            continue
+        name = module.name_of(vid)
+        if name is None:
+            raise NotEstablished("a shared variable with no OpName")
+        out.append((name, vid, _shared_words(module, vid)))
+    return out
+
+
+def _shared_words(module, vid):
+    """The number of 32-bit words a shared variable occupies."""
+    _pt = module.types.get(module.globals[vid].result_type)
+    _t = module.types.get(_pt.operands[2]) if _pt is not None else None
+    _n = 1
+    while _t is not None and _t.opcode in ARRAY_TYPES:
+        _len = module.constants.get(_t.args()[1]) if len(_t.args()) > 1 \
+            else None
+        if _len is None:
+            raise NotEstablished(
+                "a shared array with no constant length: not measured")
+        _n *= int(_len.args()[-1])
+        _t = module.types.get(_t.args()[0])
+    if _t is not None and _t.opcode == Op.OpTypeStruct:
+        if len(_t.args()) != 1:
+            raise NotEstablished(
+                "a shared struct of more than one member: not measured")
+        _m = module.types.get(_t.args()[0])
+        while _m is not None and _m.opcode in ARRAY_TYPES:
+            _len = module.constants.get(_m.args()[1])
+            if _len is None:
+                raise NotEstablished(
+                    "a shared array with no constant length: not measured")
+            _n *= int(_len.args()[-1])
+            _m = module.types.get(_m.args()[0])
+        _t = _m
+    if _t is None or _t.opcode not in (Op.OpTypeInt, Op.OpTypeFloat):
+        raise NotEstablished(
+            "a shared variable whose element is not a 32-bit scalar: not "
+            "measured")
+    return _n
+
+
+def _shared_rows(module, used):
+    """The `#var` rows of the Workgroup variables."""
+    out = []
+    for name, vid, _n in _shared_arrays(module):
+        _pt = module.types.get(module.globals[vid].result_type)
+        _at = module.types.get(_pt.operands[2])
+        if _at is None or _at.opcode not in ARRAY_TYPES:
+            raise NotEstablished("a shared variable that is not an array")
+        _st = module.types.get(_at.args()[0])
+        if _st is not None and _st.opcode != Op.OpTypeStruct:
+            # A BARE ARRAY -- no struct wrapper -- is `<name>[0]` against
+            # `shared_mem[0]`, and it carries the COUNT SUFFIX every array
+            # of more than 32 elements carries: `probes/0119_bar_a.comp`
+            # (`shared uint[64]`) prints
+            #     #var uint TGSM0[0] :  : shared_mem[0], 64 : -1 : 1
+            # where the corpus's struct-wrapped array has no suffix,
+            # because the row there is for the INNER `value[0]`, whose
+            # length is 1.  Same rule, different array.  (notes/124 §3)
+            out.append(("%s[0]" % name, type_spelling(module, _at.args()[0]),
+                        "", "shared_mem[0]%s" % _array_count_suffix(
+                            module, _at),
+                        1 if vid in used else 0))
+            continue
+        if _st is None:
+            raise NotEstablished("a shared array with no element type")
+        _mname = module.member_names.get((_at.args()[0], 0))
+        _mt = module.types.get(_st.args()[0])
+        _label = "%s[0].%s%s" % (name, _mname,
+                                 "[0]" if _mt is not None
+                                 and _mt.opcode in ARRAY_TYPES else "")
+        _et = _mt.args()[0] if _mt is not None \
+            and _mt.opcode in ARRAY_TYPES else _st.args()[0]
+        out.append((_label, type_spelling(module, _et), "",
+                    "shared_mem[0]", 1 if vid in used else 0))
     return out
 
 
@@ -109,8 +210,14 @@ def _symbol_order(module, entry_name="main"):
 _TESC_PATCH_REG = {BuiltIn.TessLevelInner: "INNER0",
                    BuiltIn.TessLevelOuter: "OUTER0"}
 # The per-vertex block members whose two rows are measured (bindmap_*.tsv).
+# The per-vertex output block's members.  Clip and cull are read off the
+# `water_*.tesc` rows exactly as position and point size were (notes/114
+# §86): `gl_out[0].gl_ClipDistance[0] : $vin.CLP065585 : CLP0[65585]` and
+# `gl_out-out.gl_ClipDistance[0] : $vout.CLP049 : CLP0[49]`.
 _TESC_PV_MEMBERS = {BuiltIn.Position: ("POSITION", "HPOS"),
-                    BuiltIn.PointSize: ("PSIZE", "PSIZ")}
+                    BuiltIn.PointSize: ("PSIZE", "PSIZ"),
+                    BuiltIn.ClipDistance: ("CLP0", "CLP0"),
+                    BuiltIn.CullDistance: ("CUL0", "CUL0")}
 
 # The per-vertex output block's READ side carries this bit in its register.
 _TESC_READ_SIDE = 0x10000
@@ -138,7 +245,10 @@ def _tesc_per_vertex_rows(module, vid, name, sid, st, used):
     WRITE side `gl_out-out.<m> : $vout.<SEM> : <REG>[slot]`, used if written
     -- all read rows first (the `water_*.tesc` corpus rows)."""
     read = 1 if _chain_loaded(module, vid) else 0
-    written = 1 if vid in used else 0
+    # THE WRITE SIDE IS PER MEMBER, not per block: `water_00540147.tesc` has
+    # `gl_out-out.gl_Position .. : 1` against `gl_PointSize`, `gl_ClipDistance`
+    # and `gl_CullDistance` at 0, on one block.
+    _touched = _member_uses(module, vid)
     rd, wr = [], []
     for i, mt in enumerate(st.args()):
         b = module.member_decoration(sid, i, Decoration.BuiltIn)
@@ -149,12 +259,24 @@ def _tesc_per_vertex_rows(module, vid, name, sid, st, used):
         slot = BUILTIN_SLOT[TESC_PER_VERTEX_KIND].get(b[0])
         if slot is None:
             return None
-        ty = type_spelling(module, mt)
-        rd.append(("%s[0].%s" % (name or "gl_out", mname), ty,
-                   "$vin.VERTEXOUT[0].%s" % sem,
+        # AN ARRAY MEMBER APPENDS THE SLOT AND TAKES NO `VERTEXOUT[0].`
+        # STEP -- the same "the step and the index are alternatives, not
+        # both" that `_builtin_block_rows` already reads for `gl_in`.
+        _mt = module.types.get(mt)
+        _arr = _mt is not None and _mt.opcode in ARRAY_TYPES
+        _label = mname + "[0]" if _arr else mname
+        ty = type_spelling(module, _mt.args()[0] if _arr else mt)
+        if _arr:
+            _rsem = "$vin.%s%d" % (sem, _TESC_READ_SIDE | slot)
+            _wsem = "$vout.%s%d" % (sem, slot)
+        else:
+            _rsem = "$vin.VERTEXOUT[0].%s" % sem
+            _wsem = "$vout.%s" % sem
+        rd.append(("%s[0].%s" % (name or "gl_out", _label), ty, _rsem,
                    "%s[%d]" % (reg, _TESC_READ_SIDE | slot), read))
-        wr.append(("%s-out.%s" % (name or "gl_out", mname), ty,
-                   "$vout.%s" % sem, "%s[%d]" % (reg, slot), written))
+        wr.append(("%s-out.%s" % (name or "gl_out", _label), ty, _wsem,
+                   "%s[%d]" % (reg, slot),
+                   1 if i in _touched else 0))
     return ("pv", rd + wr)
 
 
@@ -225,7 +347,9 @@ def _location_row(module, model, vid, storage, pointee, name, loc, used):
     if name is None:
         raise NotEstablished("an interface variable with no OpName")
     flat = module.decoration(vid, Decoration.Flat) is not None
-    sem, reg = _location_semantic(model, storage, loc[0], flat)
+    sem, reg = _location_semantic(
+        model, storage, loc[0], flat,
+        module.decoration(vid, Decoration.Patch) is not None)
     # A PER-VERTEX input -- the tessellation and geometry stages see each
     # user input as one element per input vertex, and glslang gives the
     # variable an array type to say so.  The listing spells that element 0:
@@ -241,8 +365,27 @@ def _location_row(module, model, vid, storage, pointee, name, loc, used):
         ety = at.args()[0]
         label = name + "[0]"
         sem = sem.replace("$vin.", "$vin.VERTEX[0].", 1)
-    return (label, type_spelling(module, ety), sem, reg,
-            1 if vid in used else 0)
+    # A PER-VERTEX OUTPUT OF TESSELLATION CONTROL TAKES TWO ROWS, the same
+    # two sides `gl_out` does (notes/117 §1).  `water_00540147.tesc`:
+    #     hs_BINORMAL0[0]   : $vin.VERTEXOUT[0].ATTR3 : ATTR3[65539] : .. : 0
+    #     hs_BINORMAL0-out  : $vout.ATTR3             : ATTR3[3]     : .. : 1
+    # -- the read side named `[0]` with the `VERTEXOUT[0].` step and bit 16
+    # set in the register, the write side `-out` with neither.  They come as
+    # a PAIR per variable, where the block's rows came as all-read then
+    # all-write.
+    if (model == ExecutionModel.TessellationControl
+            and storage == StorageClass.Output
+            and module.decoration(vid, Decoration.Patch) is None
+            and not ENV.get("G2S_NOTESCPVOUT")):
+        _ty = type_spelling(module, ety)
+        _rsem = sem.replace("$vout.", "$vin.VERTEXOUT[0].", 1)
+        return [(name + "[0]", _ty, _rsem,
+                 _register(TESC_PER_VERTEX_KIND, "ATTR%d" % loc[0],
+                           _TESC_READ_SIDE | loc[0]),
+                 1 if _chain_loaded(module, vid) else 0),
+                (name + "-out", _ty, sem, reg, 1 if vid in used else 0)]
+    return [(label, type_spelling(module, ety), sem, reg,
+             1 if vid in used else 0)]
 
 
 def _builtin_block_rows(module, model, vid, storage, pointee, st, prefix,
@@ -276,6 +419,43 @@ def _builtin_block_rows(module, model, vid, storage, pointee, st, prefix,
     return members
 
 
+def _interface_block_rows(module, model, vid, storage, pointee, st, name):
+    """The member rows of a USER interface block -- a struct whose members
+    carry a Location rather than a BuiltIn (notes/114 \u00a746).
+
+    `_builtin_block_rows` demands a BuiltIn on every member and refused
+    these.  They are spelled exactly like a plain located variable, one row
+    per member, with the BLOCK's name in front; and when the variable has no
+    name of its own the block is called `__defaultname_<result id>` --
+    `branches_shadowcast_ps_nodiscard_unrolledinput.frag`'s block is id 19
+    and its rows are
+
+        #var float3 __defaultname_19.v_v2p_vInterpolant1 : $vin.ATTR0 : ...
+        #var float4 __defaultname_19.v_v2p_vUserInterpolant0 : $vin.ATTR1 : ...
+
+    each member's ATTR being its OWN Location, and the used column the
+    member uses as everywhere else.  `G2S_NOIFBLOCK=1` refuses it again."""
+    if ENV.get("G2S_NOIFBLOCK"):
+        raise NotEstablished("a struct interface member with no BuiltIn")
+    touched = _member_uses(module, vid)
+    base = name or "__defaultname_%d" % vid
+    out = []
+    for i in range(len(st.args())):
+        mloc = module.member_decoration(pointee, i, Decoration.Location)
+        mname = module.member_names.get((pointee, i))
+        if mloc is None or not mname:
+            raise NotEstablished(
+                "a struct interface member with no BuiltIn or name")
+        flat = (module.member_decoration(pointee, i, Decoration.Flat)
+                is not None
+                or module.decoration(vid, Decoration.Flat) is not None)
+        sem, reg = _location_semantic(model, storage, mloc[0], flat)
+        out.append(("%s.%s" % (base, mname),
+                    type_spelling(module, st.args()[i]), sem, reg,
+                    1 if i in touched else 0))
+    return out
+
+
 def _loose_builtin_row(module, model, vid, storage, pointee, name, used,
                        origin_fragcoord):
     """A built-in variable of its own, or None when it gets no row.
@@ -306,7 +486,7 @@ def _interface_rows(module, model, vid, storage, pointee, name, used,
     output rows, a built-in block's member rows, or a loose built-in."""
     loc = module.decoration(vid, Decoration.Location)
     if loc is not None:
-        rows.plain.append(_location_row(module, model, vid, storage, pointee,
+        rows.plain.extend(_location_row(module, model, vid, storage, pointee,
                                         name, loc, used))
         return
     # TESSELLATION CONTROL'S OUTPUTS (notes/63, notes/20).
@@ -338,6 +518,19 @@ def _interface_rows(module, model, vid, storage, pointee, name, used,
             pointee, st, pervertex = st.args()[0], inner, True
             prefix = "%s[0]." % (name or "gl_in")
     if st is not None and st.opcode == Op.OpTypeStruct:
+        if (not pervertex and st.args() and module.member_decoration(
+                pointee, 0, Decoration.BuiltIn) is None
+                and module.member_decoration(
+                    pointee, 0, Decoration.Location) is not None):
+            # the BLOCK's rows go with the other block members, after
+            # the plain ones: the compiler's list has `gl_FragCoord` first
+            # and the block's four members after it, which sorting them
+            # into `rows.plain` would not give ('_' sorts before 'g')
+            rows.block_members.append((
+                name or "__defaultname_%d" % vid,
+                _interface_block_rows(module, model, vid, storage,
+                                      pointee, st, name)))
+            return
         members = _builtin_block_rows(module, model, vid, storage, pointee,
                                       st, prefix, pervertex)
         (rows.pv_members if pervertex
@@ -358,7 +551,7 @@ def _opaque_row(module, vid, pointee, name, used):
     if _storage_image(module, pointee):
         # A storage image's row is `<name>.__handle` with an EMPTY semantic
         # column, and `.__handle_nosize` when its format is Unknown
-        # (notes/110: `si_a`..`si_e`, and `img` in `si_d.comp`, which has no
+        # (notes/110: `si_a`..`si_e`, and `img` in `0110_si_d.comp`, which has no
         # format qualifier).
         fmt = module.types[pointee].operands[7]
         return ("%s.%s" % (name, "__handle_nosize" if fmt == 0
@@ -389,6 +582,8 @@ def _global_rows(module, model, vid, ins, used, origin_fragcoord, rows):
         # `#var` line: checked on a corpus shader with 26 of them, none of
         # which appears in its listing.
         pass
+    elif storage == StorageClass.Workgroup:
+        pass                        # its row comes from `_shared_rows`
     else:
         raise NotEstablished(
             "a global in storage class %d -- Input, Output, UniformConstant, "
@@ -431,7 +626,7 @@ def _matrix_suffix(module, struct_id, i):
     -- `buffer[0][0], 4` -- and it is the same rule: the stride in bytes
     over four.  The stride is the member's `MatrixStride`, not an
     `ArrayStride`.  The semantic column is NOT emptied the way an array's is;
-    `if_mat.vert` keeps `BUFFER[0]` on it."""
+    `0000_if_mat.vert` keeps `BUFFER[0]` on it."""
     _ms = module.member_decoration(struct_id, i, Decoration.MatrixStride)
     if _ms is None or _ms[0] % 4:
         raise NotEstablished("a matrix block member with no MatrixStride")
@@ -447,7 +642,7 @@ def _array_count_suffix(module, atype):
     array of structs (f_7100bd2370's recursion at 0x7100bd2c40), under the
     same floor.  Probes: `vec4 m[33]` / `m[40]` / `ivec4 m[33]` / `vec2
     m[40]` print `, 33` / `, 40`; `m[3]` .. `m[32]` nothing, used or not
-    (`dx_a.frag`, and a scratch series).  Measured on scalar and vector
+    (`0108_dx_a.frag`, and a scratch series).  Measured on scalar and vector
     elements only: a matrix element keeps `_matrix_suffix`'s rule, and an
     element of any other kind is refused past the floor."""
     if atype.opcode != Op.OpTypeArray:
@@ -466,6 +661,50 @@ def _array_count_suffix(module, atype):
                              "that are not scalars or vectors: its count "
                              "suffix is not measured")
     return ", %d" % _n
+
+
+def _struct_member_rows(module, label, struct_id, kind, reg, binding,
+                        base_off, use):
+    """A block member that is itself a STRUCT, expanded (notes/114 \u00a747).
+
+    `polygon_cull.comp`'s `ConstantBuffer` holds one struct member
+    `frustum_g` whose own member `planes` is an array of `float4`, and the
+    compiler prints ONE row for it, the path joined with a dot and the array
+    spelled `[0]`:
+
+        #var float4 __defaultname_231.frustum_g.planes[0] :  : buffer[1][0]
+
+    so the sub-member follows exactly the rules the top-level loop applies:
+    an array takes `[0]` and an EMPTY semantic, anything else the block's
+    own semantic, and the register's offset is the two offsets ADDED.  The
+    `used` column is the TOP member's -- the only block measured has one
+    sub-member, so a finer reading than that would be a guess.
+    `G2S_NOSTRUCTMEMBER=1` refuses it again."""
+    if ENV.get("G2S_NOSTRUCTMEMBER"):
+        raise NotEstablished("no established #var spelling for OpTypeStruct")
+    st = module.types.get(struct_id)
+    out = []
+    for j, jt in enumerate(st.args()):
+        jname = module.member_names.get((struct_id, j))
+        joff = module.member_decoration(struct_id, j, Decoration.Offset)
+        if jname is None or joff is None:
+            raise NotEstablished("a struct block member with no name "
+                                 "or Offset")
+        jtype = module.types.get(jt)
+        if jtype is not None and jtype.opcode == Op.OpTypeStruct:
+            out.extend(_struct_member_rows(
+                module, "%s.%s" % (label, jname), jt, kind, reg, binding,
+                base_off + joff[0], use))
+            continue
+        if jtype is not None and jtype.opcode == Op.OpTypeMatrix:
+            raise NotEstablished("a matrix inside a struct block member: "
+                                 "its row has not been seen")
+        is_array = jtype is not None and jtype.opcode in ARRAY_TYPES
+        out.append(("%s.%s%s" % (label, jname, "[0]" if is_array else ""),
+                    type_spelling(module, jt),
+                    "" if is_array else "%s[%d]" % (kind, binding),
+                    "%s[%d][%d]" % (reg, binding, base_off + joff[0]), use))
+    return out
 
 
 def _block_rows(module, block):
@@ -490,6 +729,15 @@ def _block_rows(module, block):
         is_array = mtype is not None and mtype.opcode in ARRAY_TYPES
         label = "%s.%s" % (name, mname)
         sem = "%s[%d]" % (kind, binding)
+        if mtype is not None and mtype.opcode == Op.OpTypeStruct:
+            if unref:
+                raise NotEstablished(
+                    "an unreferenced block with a struct member: its rows "
+                    "have not been seen")
+            members.extend(_struct_member_rows(
+                module, label, mt, kind, reg, binding, off[0],
+                1 if i in touched else 0))
+            continue
         if _struct_array(module, mt) is not None:
             if unref:
                 raise NotEstablished(
@@ -512,7 +760,7 @@ def _block_rows(module, block):
         use = 1 if ((i, 0) in touched_el if is_array else i in touched) else 0
         if unref:
             # no binding: `BUFFER[-1]` on the semantic, an EMPTY register
-            # column (`ce_n29.vert`)
+            # column (`0072_ce_n29.vert`)
             if sem:
                 sem = "%s[-1]" % kind
             members.append((label, type_spelling(module, mt), sem, "", 0))
@@ -538,13 +786,34 @@ def _buffer_rows(module):
     return out
 
 
+def _plain_order(row):
+    """The order the `#var` block puts the plain rows in.
+
+    Alphabetical by label, EXCEPT that tessellation control's two-sided
+    outputs sort as one name with the READ side first: `water_*.tesc` has
+    `hs_BINORMAL0[0]` before `hs_BINORMAL0-out`, where a plain string sort
+    would put `-out` first (`-` is 0x2d, `[` is 0x5b).  Stripping the side
+    off the key and ranking read before write is what reproduces it, and it
+    leaves every one-sided label where it was.  (notes/117 §1)
+    """
+    _l = row[0]
+    if _l.endswith("-out"):
+        return (_l[:-4], 1, _l)
+    if _l.endswith("[0]"):
+        return (_l[:-3], 0, _l)
+    return (_l, 0, _l)
+
+
 def _var_line(row):
     name, ty, sem, reg, use = row
     return "#var %s %s : %s : %s : -1 : %d" % (ty, name, sem, reg, use)
 
 
 def _format_var_lines(module, rows, buffer_rows, used):
-    out = [_var_line(r) for r in sorted(rows.plain)]
+    # The SHARED rows come first, as their `#semantic` lines do
+    # (`post_tonemap_update.comp`, notes/124 §2).
+    out = [_var_line(r) for r in _shared_rows(module, used)]
+    out += [_var_line(r) for r in sorted(rows.plain, key=_plain_order)]
     for _, members in sorted(rows.block_members):
         out.extend(_var_line(r) for r in members)
     out.extend(_var_line(r) for r in buffer_rows)

@@ -13,10 +13,10 @@ from glasmlib.common import NotEstablished, ENV, ACCESS_CHAINS
 from glasmlib.types import _components, _glasm_type_code, \
     _pointee_components, _pointee_code, _signedness
 from glasmlib.operands import _scalar_value, _constant_operand, \
-    _interface_operand, _per_vertex_operand, \
-    _per_vertex_location_operand
+    _interface_operand, _per_vertex_operand, _per_vertex_location_operand, \
+    _per_vertex_dynamic_location_operand, _block_member_operand
 from glasmlib.chains import _buffer_chain, _buffer_chain_via_matrix
-from glasmlib.text import _emit, _source, _swizzle
+from glasmlib.text import _emit, _source, _swizzle, _COMPONENTS
 from glasmlib.lower.core import _local_chain
 from glasmlib.blocks import _storage_image
 from glasmlib import nodes
@@ -30,7 +30,7 @@ class MemoryOps(object):
         """A LOAD OF A PARAMETER is a named temp (`t = v`, the callee's first
         statement in g2s_trace_irtree): its readers in the block take the
         parameter's value, and its own store is flushed at the block's end in
-        the entry copy's position (both seq 18 in `cf_call.vert`'s nodes:
+        the entry copy's position (both seq 18 in `0050_cf_call.vert`'s nodes:
         they store the same value)."""
         if ins.opcode != Op.OpLoad or ins.args()[0] not in self.formal:
             return False
@@ -102,7 +102,7 @@ class MemoryOps(object):
             # a component read in the block that stored it takes the stored
             # value (notes/69)
             # value (notes/69) -- except a plain store into a lane other than
-            # x, an insert whose node the read selects from: `lf_b.frag`'s
+            # x, an insert whose node the read selects from: `0102_lf_b.frag`'s
             # `u_xlat0.z = a.x * a.y; .. u_xlat0.z` reads the store node
             # (`tools/gsum.py`: the MUL's source is node 0.1, mask z), `MUL.F32
             # R1, fragment.attrib[0], R0.z;`
@@ -149,7 +149,7 @@ class MemoryOps(object):
                 self.values[ins.result], c0 = _cell
         if self.values[ins.result] == self.local_reg.get(var):
             # a lane read of the NAME after a merge pair (core.py
-            # `_name_read_after_pair`; `cy_g.frag`'s `u3 * u2.w`)
+            # `_name_read_after_pair`; `0000_cy_g.frag`'s `u3 * u2.w`)
             self._name_read_after_pair(var, {ci}, ins.result)
         if ENV.get("G2S_CFWDBG"):                          # diagnosis only
             import sys as _sys
@@ -164,12 +164,28 @@ class MemoryOps(object):
 
     def _load_lmem_element(self, ins, _lch):
         """AN ELEMENT OF A LOCAL-MEMORY ARRAY (notes/84).  The graph of
-        `lm_icb.frag`: the index's carrier (op 0x4a, typed signed int like
+        `0071_lm_icb.frag`: the index's carrier (op 0x4a, typed signed int like
         every address carrier -- `MOV.S R0.x, fragment.attrib[0];`) and the
         load (op 59), which prints the element's full swizzle: `MOV.U R4,
         lmem0[R0.x].xyzw;`."""
         _var = _lch.args()[0]
-        if len(_lch.args()) != 2:
+        # A COMPONENT OF AN ELEMENT reads that component and writes THE SAME
+        # LANE: `light_cull.comp` prints `MOV.F R0.w, lmem0[R0.x].w;` beside
+        # the whole element's `MOV.F R10, lmem0[R0.x].xyzw;`, and a reader
+        # that wants it in `.x` gathers it afterwards (`MOV.F R3.x, R0.w;`).
+        # (notes/124 §1)
+        _comp = None
+        if len(_lch.args()) == 3 and not ENV.get("G2S_NOLMEMCOMP"):
+            _cv = _scalar_value(self.module, _lch.args()[2])
+            try:
+                _comp = int(_cv)
+            except (TypeError, ValueError):
+                _comp = None
+            if _comp is None or not 0 <= _comp < 4:
+                raise NotEstablished(
+                    "a local-memory element component that is not a "
+                    "constant lane: not measured")
+        elif len(_lch.args()) != 2:
             raise NotEstablished("a local-memory chain past the element: a "
                                  "component of an element is not measured")
         if _var not in self.lmem_elem:
@@ -180,7 +196,7 @@ class MemoryOps(object):
             raise NotEstablished("a constant index into local memory: not "
                                  "measured")
         # the index is read as a block index is (`_index_source`): a lane of
-        # a construct made in this block reads its source -- `lm_ix.frag`'s
+        # a construct made in this block reads its source -- `0108_lm_ix.frag`'s
         # `icb[u_xlati19.x]` after `u_xlati19 = ivec4(k.x * 3, ..)` prints
         # `MOV.S R2.x, R0;`, R0 the MUL (the corpus's `chr_hair_f0ad47e1`)
         _isrc = (_source(self.values, self.comps, _iid, 1)
@@ -193,8 +209,17 @@ class MemoryOps(object):
         self.carriers.add(int(_i[1:]))
         self.lines.append(_emit(_car, "%s.x" % _i, _isrc))
         dst = self._fresh(True)
-        self.lines.append(_emit(self.lmem_elem[_var][0], dst,
-                                "lmem%d[%s.x].xyzw" % (self.lmem_k[_var], _i)))
+        if _comp is None:
+            self.lines.append(_emit(
+                self.lmem_elem[_var][0], dst,
+                "lmem%d[%s.x].xyzw" % (self.lmem_k[_var], _i)))
+        else:
+            _c = _COMPONENTS[_comp]
+            self.lines.append(_emit(
+                self.lmem_elem[_var][0], "%s.%s" % (dst, _c),
+                "lmem%d[%s.x].%s" % (self.lmem_k[_var], _i, _c)))
+            self.comps[ins.result] = (_comp,) * 4
+            self.scalar.add(ins.result)
         self.values[ins.result] = dst
 
     def _load_local_whole(self, ins, ptr):
@@ -222,7 +247,7 @@ class MemoryOps(object):
         _map = dict((c, _cf[c][1:]) for c in _cf if _cf[c][0] == self._bkey())
         if _map:
             # some components were stored in this block: each read takes its
-            # component's stored value, the others the name (`lv_v2a.frag`)
+            # component's stored value, the others the name (`0069_lv_v2a.frag`)
             self.lsplit[ins.result] = _map
 
     def _refuse_undefined_lanes(self, ins, ptr):
@@ -255,6 +280,21 @@ class MemoryOps(object):
                 if (_u.opcode == Op.OpCompositeExtract
                         and _u.args()[1] in _st):
                     continue
+                if (_u.opcode == Op.OpBitcast
+                        and not ENV.get("G2S_NOBITCASTLANES")):
+                    # A BITCAST READS THE LOCAL LANE BY LANE (notes/114
+                    # \u00a744), so it is defined in the same sense an
+                    # extract is: the undefined lane becomes an ordinary
+                    # register read of the local's own register and
+                    # everything after it is ordinary.  `0114_ul_e.frag` and
+                    # `0114_ul_f.frag` (stored `.xz` and `.xyw`) print
+                    # `MOV.U R3.x, R6.y;` for the lane nothing stored;
+                    # `0114_ul_g.frag` computes with the result afterwards and
+                    # is still byte for byte the compiler's.  ARITHMETIC on
+                    # the local itself is NOT this and is still refused --
+                    # `ul_a`..`ul_d` are the counter-cases.
+                    # `G2S_NOBITCASTLANES=1` refuses it again.
+                    continue
                 raise NotEstablished(
                     "a read of a local's lane it never stores: the value is "
                     "undefined, and the compiler's lines for it are its "
@@ -264,7 +304,7 @@ class MemoryOps(object):
         """A LOAD IN THE BLOCK OF THE LOCAL'S STORE takes the stored value,
         construct head and all: `gl_Position = u_xlat1` right after
         `u_xlat1 = vec4(..)` prints `MOV.F result.position.x, R4;` --
-        component 0's source (`ce_n29.vert`)."""
+        component 0's source (`0072_ce_n29.vert`)."""
         self.values[ins.result] = _fw[1]
         self.fwd_blk[ins.result] = (self._bkey(), self.local_reg.get(ptr))
         if len(_fw) > 2:
@@ -295,14 +335,20 @@ class MemoryOps(object):
         # (notes/67 §1): the reader substitutes its expression, and
         # `f_7100f3aab0` interns expressions -- a template that matches an
         # existing node returns that node.  So three `OpLoad`s of `U.s` are
-        # one expression and one DAG leaf in the block: `pu_a.vert`'s
+        # one expression and one DAG leaf in the block: `0075_pu_a.vert`'s
         # `vec4(s, s, s, s)` prints ONE `LDC.F32 R0.x, buf0[16];`, and
-        # `pu_c.vert`'s `a.x * s` and `a.y + s` read the same register.
+        # `0075_pu_c.vert`'s `a.x * s` and `a.y + s` read the same register.
         _dl = (_dyn if isinstance(_dyn, list)
                else [_dyn] if _dyn is not None else [])
         _lkey = (mnem, name, off, _lds, tuple(
             (self._index_source(_d[0]), _d[1]) for _d in _dl))
-        if _bcomp is not None and _dyn is not None:
+        # A COMPONENT OF A DYNAMICALLY INDEXED BLOCK VECTOR is the whole
+        # vector's load read through that component, exactly as the STATIC
+        # form does (`_load_buffer_static`): the address is the only thing
+        # that differs between them (notes/123 §1).
+        # `G2S_NODYNBCOMP=1` restores the refusal.
+        if (_bcomp is not None and _dyn is not None
+                and ENV.get("G2S_NODYNBCOMP")):
             raise NotEstablished(
                 "a component of a dynamically indexed block vector: not "
                 "measured")
@@ -328,7 +374,7 @@ class MemoryOps(object):
 
     def _load_matrix(self, ins, chain, _lt):
         """NOTHING IS EMITTED HERE.  The matrix's columns are loaded by
-        whatever multiplies it, one block each (`if_mat.vert` dumps four
+        whatever multiplies it, one block each (`0000_if_mat.vert` dumps four
         blocks, each `LDC`, `MOV`, `MUL` and -- past the first -- `ADD`)."""
         mnem, name, off, _tid, _dyn, _bcomp = chain
         _col = self.module.types.get(_lt.args()[0])
@@ -350,7 +396,7 @@ class MemoryOps(object):
         0x1c) over the member.  `f_7100f10a30` lowers 0x1d in its case at
         0x7100f117c0 (jump-table entry 0x364): the child is lowered afresh
         (`f_7100f0f260` makes a new `LDC`, 0x3b, at every read -- gdb on
-        `mx_b.vert` shows two loads of `m[0].y` with the same member symbol,
+        `0104_mx_b.vert` shows two loads of `m[0].y` with the same member symbol,
         where `ld_mw`'s second read of `m.w` makes none), `f_7100f12b90`
         builds the swizzle (0x5e), and because the lowered operand is a load
         a MOV (0x47, 0x7100f11890) is made -- in `mx_b`, `mx_g` and `ld_mx`
@@ -392,7 +438,7 @@ class MemoryOps(object):
         dst = self._fresh()
         n = len(self.lines)
         # the value is the MOV's node, a node of its own and no component of
-        # the load (a construct takes it straight: `mx_d.vert`'s `m[1].x` in
+        # the load (a construct takes it straight: `0104_mx_d.vert`'s `m[1].x` in
         # lane z is `MOV.F R2.x, R2; .. MOV.F R2.z, R2.x;`, one MOV)
         self.ldc_canon[val] = (val, None)
         self.ldc_line[val] = n
@@ -415,7 +461,7 @@ class MemoryOps(object):
         """A MATRIX PART READ BY A STORE THAT OPENED A BLOCK is made again
         in the new block: the load is substituted into the store's
         statement (notes/67 §1), as `_reload` makes a block load again --
-        `ld_mx.vert` prints `u_xlat0.x = m[2].y`'s `LDC.F32X2 R0.y,
+        `0103_ld_mx.vert` prints `u_xlat0.x = m[2].y`'s `LDC.F32X2 R0.y,
         buf0[48];` after `u_xlat0.z`'s pair, and its MOV writes the lane.
         The MOV made before the cut reads a load nothing else reads and
         writes a value nothing reads: both go (`dead_lines`)."""
@@ -439,9 +485,21 @@ class MemoryOps(object):
             self.scalar.add(ins.result)
         # two readers now: the load cannot fold into a store
         self.ldc_at.pop(_lhit[2], None)
+        # ... NOR INTO A CONSTRUCT'S LANE X (notes/114 §41).  Reaching here
+        # is the proof that the two loads are in ONE block, which is the
+        # thing that cannot be known at the first load -- so it is recorded
+        # against the FIRST load's SPIR-V id, which survives a second pass,
+        # and `_load_is_lane_x` consults it next time round.
+        if _dyn is None:
+            self.shared_first.add(_lhit[2])
+        # From here the register is free to fold again: the duplicate has
+        # been reached, so no later construct is waiting for it.  That is
+        # the compiler's pair -- the first construct copies out of the
+        # load's register, the second writes its `.y` into that register.
+        self.ldc_shared.discard(_lhit[1])
 
     def _load_buffer_static(self, ins, chain, _lkey, _lds):
-        """NOT a band temp: `p05_ubo.vert`'s load and the multiply that reads
+        """NOT a band temp: `0005_p05_ubo.vert`'s load and the multiply that reads
         it are ONE vreg in the compiler, which is why they share `R0`.  Only
         the dynamically indexed form, whose address computation sits in
         between, splits them."""
@@ -457,6 +515,9 @@ class MemoryOps(object):
             self.comps[ins.result] = (_bcomp,) * 4
             self.scalar.add(ins.result)
         self.ldc_vreg[dst] = (self._bkey(), mnem, _lds, name, off)
+        if ins.result in self.shared_before and not ENV.get("G2S_LANESHARE"):
+            # the previous pass saw this location loaded again IN THIS BLOCK
+            self.ldc_shared.add(dst)
         self.ldc_lines.add(n)
         self.lines.append("%s %s%s, %s[%d];" % (mnem, dst, _lds, name, off))
         self.values[ins.result] = dst
@@ -464,7 +525,7 @@ class MemoryOps(object):
     def _index_source(self, vid):
         """A dynamic index's operand form.  A component of a CONSTRUCT made in
         this block is read from its source, as an arithmetic operand's is
-        (`_con_read`): `ix_a.frag`'s `v[u_xlati0.y]` right after `u_xlati0 =
+        (`_con_read`): `0103_ix_a.frag`'s `v[u_xlati0.y]` right after `u_xlati0 =
         ivec2(a.x * 3, a.y * 5)` scales `MUL.S R3.x, R1, {4, ..};`, R1 the
         second product (`monster_02d3d44e`'s `MUL.S R21.x, R8, {64, ..};`)."""
         _crd = (self._con_read(vid)
@@ -495,7 +556,7 @@ class MemoryOps(object):
             return None
         if (_signedness(self.module, _d.result_type) != "S"
                 and not ENV.get("G2S_FOLDUNSIGNED")):
-            # only a SIGNED add folds: `dx_d.frag`'s `m[k.y + 2u]` (uint)
+            # only a SIGNED add folds: `0000_dx_d.frag`'s `m[k.y + 2u]` (uint)
             # keeps `ADD.U R1.x, .., {2, ..}; MUL.S R2.x, R1, {16, ..};` and
             # `+ 432` -- an unsigned add may wrap
             return None
@@ -510,7 +571,7 @@ class MemoryOps(object):
         return None
 
     def _load_buffer_dynamic(self, ins, chain, _lkey, _lds, _dl):
-        """A DYNAMIC INDEX.  MEASURED from the emit list of `if_arr.vert`: a
+        """A DYNAMIC INDEX.  MEASURED from the emit list of `0052_if_arr.vert`: a
         `0x90` scaling the index by the array stride, a `0x4a` carrier, and
         the load taking the register as a BYTE offset.  Both the scale and
         the carrier are typed SIGNED INT whatever the index's GLSL type is --
@@ -520,15 +581,15 @@ class MemoryOps(object):
         contradiction is recorded in notes/52.
 
         The carrier is a node of its OWN, with its own vreg: the compiler's
-        records for `ce_head.vert` give the scale and the carrier consecutive
+        records for `0072_ce_head.vert` give the scale and the carrier consecutive
         numbers (27, 28), coalesced into one register -- one placeholder for
         both hid the carrier's interference from the graph (py/ifg.py).
 
-        TWO INDICES (notes/89, `sb_b.frag`'s `buf[i].value[j]`): each is
+        TWO INDICES (notes/89, `0089_sb_b.frag`'s `buf[i].value[j]`): each is
         scaled by its own stride -- `MUL.S R2.x, i, {580, ..}; MUL.S R1.x, j,
         {4, ..};` -- and the INNER product is added to the outer one, `ADD.S
         R1.x, R1, R2;`, before the carrier.  The INNER product is made first:
-        `tools/nodedump.py probes/sb_b.frag.spv` numbers `j * 4` vreg 9 and
+        `tools/nodedump.py probes/0089_sb_b.frag.spv` numbers `j * 4` vreg 9 and
         `i * 580` vreg 10, then the ADD 11 and the carrier 12 (the outer MUL
         still prints first: the scheduler's)."""
         mnem, name, off, _tid, _dyn, _bcomp = chain
@@ -538,6 +599,12 @@ class MemoryOps(object):
                           % (mnem, dst, _lds, name, _t,
                              " + %d" % off if off else ""))
         self.values[ins.result] = dst
+        # A COMPONENT OF THE LOADED VECTOR is a swizzle on the reads, the
+        # same as the static form does (`_load_buffer_static`): the load
+        # takes the whole vector and the component rides in `comps`.
+        if _bcomp is not None:
+            self.comps[ins.result] = (_bcomp,) * 4
+            self.scalar.add(ins.result)
         self.ldc_same[_lkey] = (self._bkey(), dst, ins.result,
                                 len(self.lines) - 2 - _nprods
                                 - (_nprods == 2))
@@ -545,11 +612,11 @@ class MemoryOps(object):
 
     def _dynamic_address(self, chain, _dl):
         """The scaled index and its carrier (`_load_buffer_dynamic`, and a
-        buffer STORE's the same, `st_c.comp`): (the carrier, the constant
+        buffer STORE's the same, `0111_st_c.comp`): (the carrier, the constant
         offset, how many products)."""
         mnem, name, off, _tid, _dyn, _bcomp = chain
         if len(_dl) == 1 and not ENV.get("G2S_NOINDEXFOLD"):
-            # A CONSTANT ADDED TO THE INDEX GOES INTO THE OFFSET: `dx_a.frag`'s
+            # A CONSTANT ADDED TO THE INDEX GOES INTO THE OFFSET: `0108_dx_a.frag`'s
             # `m[1 + k.y]` and `m[k.y + 2]` scale `k.y` itself and load
             # `buf0[R0.x + 448]` / `+ 464` (432 + 16, + 32), the corpus's
             # `chr_skin_bdbffe42` the same.  The ADD is still made -- the
@@ -592,8 +659,8 @@ class MemoryOps(object):
         if not ENV.get("G2S_ADDRNOTIE"):
             # THE ADDRESS IS ONE STATEMENT: the first product made, the ADD
             # and the carrier share a `node[36]` (`tools/nodedump.py`:
-            # `st_c.comp`'s MUL and MOV.S seq 2 and 2, `dx_a.frag`'s 1/1,
-            # 9/9, 17/17, `cb_b.comp`'s 3/3, and `sb_b.frag`'s inner MUL,
+            # `0111_st_c.comp`'s MUL and MOV.S seq 2 and 2, `0108_dx_a.frag`'s 1/1,
+            # 9/9, 17/17, `0111_cb_b.comp`'s 3/3, and `0089_sb_b.frag`'s inner MUL,
             # ADD and carrier 4/4/4 with the outer MUL made after them, 6).
             # `cb_b` needs it: the value's gather, made before the address,
             # sits between them in pass 1's list (notes/111).
@@ -613,7 +680,7 @@ class MemoryOps(object):
             # gl_FrontFacing IS AN EXPRESSION, NOT A REGISTER (notes/88): the
             # header declares it `int ... FACE_FLAT`, and a read is `facing >
             # 0` -- `MOV.S R0.x, fragment.facing; SGT.S R1.x, R0, {0, ..};` in
-            # `ff_a.frag`.  A load is substituted into its reader (notes/67
+            # `0088_ff_a.frag`.  A load is substituted into its reader (notes/67
             # §1), so nothing is emitted here; the reader builds the
             # expression.
             self.facing_loads.add(ins.result)
@@ -623,7 +690,7 @@ class MemoryOps(object):
             # THE HANDLE LOAD IS EMITTED AT THE USE, NOT AT THE LOAD.
             # `LDC.U64 D0.x, buf14[0];` sits IMMEDIATELY before the
             # instruction that samples -- after the coordinate has been
-            # computed, not before it (`fr_texlod.frag`) -- so the SPIR-V
+            # computed, not before it (`0033_fr_texlod.frag`) -- so the SPIR-V
             # `OpLoad` of the sampler records the variable and the image op
             # emits both lines together.
             self.samplers[ins.result] = ptr
@@ -633,7 +700,7 @@ class MemoryOps(object):
             return
         # An access chain that picks ONE COMPONENT of an interface variable
         # is not a load at all: the component becomes a swizzle on the
-        # operand, which is why `cf_if.vert` compares against
+        # operand, which is why `0026_cf_if.vert` compares against
         # `vertex.attrib[0]` (bare, meaning `.x`) rather than loading it.
         ch = self.by_result.get(ptr)
         # ... and a PER-VERTEX INPUT ARRAY's first index is the VERTEX, not
@@ -658,9 +725,40 @@ class MemoryOps(object):
                 self.comps[ins.result] = (int(cv),) * 4
                 self.scalar.add(ins.result)
                 return
+        if (ch is not None and ch.opcode in ACCESS_CHAINS
+                and len(ch.args()) == 3
+                and not ENV.get("G2S_NOBLOCKMEMBER")):
+            # ONE COMPONENT of a block member, the three-index chain: the
+            # component becomes a swizzle on the member's attribute, as it
+            # does for a plain located variable just above.
+            _bm = _block_member_operand(module, ch.args()[0],
+                                        _scalar_value(module, ch.args()[1]),
+                                        self.model)
+            _cv = _scalar_value(module, ch.args()[2])
+            if _bm is not None and _cv is not None and 0 <= int(_cv) < 4:
+                if self.lines and (not self.cuts
+                                   or self.cuts[-1] != len(self.lines)):
+                    self._flush()
+                    self.cuts.append(len(self.lines))
+                self.values[ins.result] = _bm[0]
+                self.comps[ins.result] = (int(_cv),) * 4
+                self.scalar.add(ins.result)
+                return
+        if (ch is not None and ch.opcode in ACCESS_CHAINS
+                and len(ch.args()) == 2
+                and not ENV.get("G2S_NOBLOCKMEMBER")):
+            _bm = _block_member_operand(module, ch.args()[0],
+                                        _scalar_value(module, ch.args()[1]),
+                                        self.model)
+            if _bm is not None:
+                self._load_block_member(ins, ptr, _bm)
+                return
         src = _interface_operand(module, ptr, self.model)
         if src is None:
             src = _per_vertex_operand(module, ptr, self.model, self.by_result)
+        if src is None:
+            src = _per_vertex_dynamic_location_operand(
+                module, ptr, self.model, self.by_result)
         if isinstance(src, tuple):
             self._load_per_vertex_dynamic(ins, src)
             return
@@ -672,7 +770,8 @@ class MemoryOps(object):
         """notes/63: the index is copied into a register by the carrier MOV
         (typed signed int, as `if_arr`'s), then the element is MOVed out of
         the aliased array."""
-        _alias, _iid = src
+        _alias, _iid = src[0], src[1]
+        _loc = src[2] if len(src) > 2 else None
         _isrc = _source(self.values, self.comps, _iid)
         _car = _opchain.mnemonic_for_opcode(nodes.ADDRESS_MOV, nodes.S32)
         _mv = _opchain.mnemonic_for_opcode(
@@ -687,8 +786,67 @@ class MemoryOps(object):
         self.carriers.add(int(_i[1:]))
         self.lines.append(_emit(_car, "%s.x" % _i, _isrc))
         dst = self._fresh()
-        self.lines.append(_emit(_mv, dst, "%s[%s.x]" % (_alias, _i)))
+        # the read writes the VALUE'S mask: `MOV.F R18.xyz, ..` for a vec3
+        _n = _components(self.module, ins.result_type)
+        _ds = (_opchain.dest_suffix(_n) or "") if (_n and _loc is not None) \
+            else ""
+        self.lines.append(_emit(_mv, dst + _ds,
+                                "%s[%s.x]" % (_alias, _i) if _loc is None
+                                else "%s[%s.x][%d]" % (_alias, _i, _loc)))
         self.values[ins.result] = dst
+
+    def _load_block_member(self, ins, ptr, bm):
+        """A MEMBER OF AN INPUT INTERFACE BLOCK is materialised COMPONENT BY
+        COMPONENT into a register (notes/114 \u00a748).
+
+        `probes/0114_ib_a.frag`'s `vec3 a` at ATTR0 does not read
+        `fragment.attrib[0]` whole; the compiler fills a register lane by
+        lane, with the merge halves of an ordinary local:
+
+            MOV.F R4.yz, R4;   MOV.F R4.x, fragment.attrib[0];
+            MOV.F R0.x, fragment.attrib[0].y;
+            MOV.F R4.xz, R4;   MOV.F R4.y, R0.x;
+            ...
+
+        so the member is lowered as a LOCAL whose components are stored from
+        the attribute, and the ACCESS CHAIN's own result id is the local's
+        identity -- it is a pointer to the member's type, which is exactly
+        what the local machinery asks of a variable id.
+        `G2S_NOBLOCKMEMBER=1` refuses it again."""
+        module = self.module
+        _op, _mt = bm
+        _n = _components(module, _mt)
+        if not _n or _n > 4:
+            raise NotEstablished("an interface block member that is not a "
+                                 "vector or scalar")
+        # ONE BLOCK PER COMPONENT STORE.  The compiler's `stamps` for
+        # `0114_ib_b.frag` are blocks of 2, 3, 3, 3, 2, 3, 3 -- a component
+        # store's pair, with its scratch where it has one -- so a member's
+        # FIRST store opens a block just as its later ones do
+        # (`_open_for_component_store` only cuts when the same name is
+        # stored twice, which a new member never is).  Without the cut the
+        # first member's last lane and the second member's first pair land
+        # in ONE span and the scheduler reorders across the boundary.
+        if self.lines and (not self.cuts or self.cuts[-1] != len(self.lines)):
+            self._flush()
+            self.cuts.append(len(self.lines))
+        self.lstored.setdefault(ptr, set()).update(range(_n))
+        # The component travels in `comps`, as it does for a real value:
+        # the gather appends the source component itself, so handing it an
+        # already-swizzled operand printed `fragment.attrib[1].y.x`.  The
+        # lane's value gets an id of its own, past the module's bound, so
+        # `_component_operand` reads its component and finds no defining
+        # instruction -- which is what sends `.y`..`.w` through the scratch
+        # `.x`, exactly as the compiler does.
+        _base = getattr(self, "_bm_id", None) or (module.bound + 1)
+        for _k in range(_n):
+            _vid = _base + _k
+            self.values[_vid] = _op
+            self.comps[_vid] = (_k,) * 4
+            self._store_component_pair(_vid, None, _op, ptr, _k)
+        self._bm_id = _base + _n
+        self.values[ins.result] = self._local_register(ptr)
+        self.load_of[ins.result] = (ptr, self.values[ins.result])
 
     def _refuse_load(self, ptr):
         """What the load is, for the census: the chain's base variable, its
@@ -713,14 +871,14 @@ class MemoryOps(object):
     def _lmem_store(self, var, val, in_registers=False):
         """`var = <constant array>` into local memory (notes/84).
 
-        The compiler's graph for `lm_icb.frag` (`tools/gsum.py`): the array
+        The compiler's graph for `0071_lm_icb.frag` (`tools/gsum.py`): the array
         value is a construct, one MOV node per element into a temp of its own
         (seq 1..4, no successors), and the assignment is one store node per
         element into `lmem<k>[i]` (op 60, seq 7, 10, 13, 16) whose source is
         the element's constant, not the temp.  Both print:
             MOV.U R3, {0, 0, 0, 4};  ...  MOV.U lmem0[3], {0, 0, 0, 4};
         An array kept in REGISTERS stores each element into a register of its
-        own (`mq_n8.frag`: eight `MOV.U R, {..}` and no `lmem`).
+        own (`0091_mq_n8.frag`: eight `MOV.U R, {..}` and no `lmem`).
         """
         module = self.module
         cins = module.constants.get(val)
@@ -737,7 +895,15 @@ class MemoryOps(object):
                                  "a four-component vector: only uvec4/vec4 "
                                  "arrays are measured")
         elems = list(cins.args())
-        if len(set(elems)) != len(elems):
+        # A REPEATED ELEMENT IS NOT INTERNED.  `ui_bold_p.frag`'s array has
+        # 34 elements of which two are the same constant (indices 0 and 19),
+        # and the listing has 34 `MOV.U R..` temps and both stores --
+        # `MOV.U lmem0[0], {1065353216, 0, 0, 0};` and `MOV.U lmem0[19],
+        # {1065353216, 0, 0, 0};`.  One temp per element, duplicates and
+        # all, which is what this already emits.  (notes/124 §1)
+        # `G2S_LMEMINTERN=1` restores the refusal below, which guarded
+        # nothing: the interning it worried about does not happen.
+        if len(set(elems)) != len(elems) and ENV.get("G2S_LMEMINTERN"):
             raise NotEstablished("a constant array repeating an element: "
                                  "whether the construct interns the element "
                                  "nodes is not measured")

@@ -1,4 +1,9 @@
 # generated-file guest addr	hook	patched at
+#
+# f_7100bd74f0 carries TWO hooks on purpose.  `g2s_trace_node_lr` names the
+# printer's caller; `g2s_trace_node` dumps the node's fields, and WITHOUT IT
+# no texture or memory line has an opcode, because that function prints them
+# itself and they never reach f_710005c1dc (notes/134, tools/opcodemap.py).
 # Re-apply after regenerating the port tree: tools/trace_patch.py
 # and tools/indirect_patch.py for the ones they know, by hand at the
 # generated label for the rest (HANDOVER.md section 3.1).
@@ -88,6 +93,7 @@
 710005c71c	g2s_trace_node	0x710005c71c
 7100bd2370	g2s_trace_sym	0x7100bd2370
 7100bd61f4	g2s_dump_opnames	0x7100bd61f4
+7100bd74f0	g2s_trace_node	0x7100bd74f0
 7100bd74f0	g2s_trace_node_lr	0x7100bd74f0
 7100bda8b0	g2s_dump_vregs	0x7100bda8b0
 7100bddcf0	g2s_trace_opcodes	0x7100bddcf0

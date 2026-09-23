@@ -209,7 +209,7 @@ def _number_conditions(lines):
     an `IF`/`KIL` test -- reads the latest set, `NE$k`.  `sched.parse` names
     that vreg `C$k`; `_render_conditions` prints the register it is given.
     A set marked `RC$+` writes another LANE of the set before's vreg (a
-    constructed bool vector, `sel_g.frag`: four sets, one vr).
+    constructed bool vector, `0100_sel_g.frag`: four sets, one vr).
     `G2S_NOCCVREG=1` leaves the lines as they are, the mark dropped."""
     if ENV.get("G2S_NOCCVREG"):
         return [l.replace("C$+", "C") for l in lines]
@@ -308,7 +308,7 @@ def _ldc_at_reader(lines, ldc_vreg, cuts, ties, con_stmt=(),
     The reader substitutes a load into the statement that uses it (notes/67
     §1), so the LDC's node is created while that statement is lowered, just
     before the reader's own node -- not where the `OpLoad` stood.  The cut
-    `mq_n14.frag`'s `u_xlat1.y = dot(mtx[1], uintBitsToFloat(ICB[i]))`: the
+    `0000_mq_n14.frag`'s `u_xlat1.y = dot(mtx[1], uintBitsToFloat(ICB[i]))`: the
     element load is seq 83, the LDC of `mtx[1]` seq 90, and the LDC prints
     after the bitcast's gather, right before the DP4.  The `OpLoad` of
     `mtx[1]` comes first in the SPIR-V.  So the LDC line takes, as its
@@ -425,7 +425,7 @@ def _components_read(lines, i, v, live=0xF):
     """The components of `v` the lines after `i` read while the load's
     value is still in them -- a write kills only the components it writes
     (a constructor that takes the load as its lane x writes the other lanes
-    of the same register: `pu_f.vert`, notes/104 §8); None when a reading
+    of the same register: `0104_pu_f.vert`, notes/104 §8); None when a reading
     line cannot be parsed."""
     used = 0
     for l2 in lines[i + 1:]:
@@ -452,9 +452,9 @@ def _narrow_loads(lines, ldc_vreg, dead=None):
     components its block reads, and its width suffix is the smallest that
     reaches the highest of them: none for `.x`, `X2` for `.y`, `X4` for `.z`
     and `.w` (there is no `X3`; a vec3 member prints `LDC.F32X4 R.xyz`).
-    `pl_e.vert` prints `LDC.F32 R0.x`, `LDC.F32X2 R0.y`, `LDC.F32X4 R0.z`,
+    `0076_pl_e.vert` prints `LDC.F32 R0.x`, `LDC.F32X2 R0.y`, `LDC.F32X4 R0.z`,
     `LDC.F32X4 R0.w` for the four element blocks of `gl_Position = v`.
-    `pl_c.vert` (`a * v.z`) prints `LDC.F32X4 R0.z`.  A load whose reads
+    `0076_pl_c.vert` (`a * v.z`) prints `LDC.F32X4 R0.z`.  A load whose reads
     cannot all be parsed keeps its type's mask."""
     for i, l in enumerate(lines):
         m = _ldc_line(l)
@@ -521,20 +521,39 @@ def _creation_order(lines, flushed, ldc_create=None):
 # (opchain.MNEMONIC) has none or several: the converter's MOV lines are
 # 0x47 (or the index carrier 0x4a, which every predicate here answers the
 # same), a rounding op is named by its mode (0x6c / 0x6d, notes/23), and an
-# LDC is the load node 0x3b (`bc_sbo.vert`'s DAG: the one unnamed op), and so
-# is an LDB (`if_ssbo.vert`'s DAG: its one load is 0x3b).
+# LDC is the load node 0x3b (`0072_bc_sbo.vert`'s DAG: the one unnamed op), and so
+# is an LDB (`0030_if_ssbo.vert`'s DAG: its one load is 0x3b).
 _REPLICATE_OPCODES = {"MOV": (0x47, 0x4a), "TRUNC": (0x6c, 0x6d),
                       "ROUND": (0x6c, 0x6d), "LDC": (0x3b,), "LDB": (0x3b,)}
 
 
 # Lane-wise readers beyond the scheduler's set: a BFI reads its insert and
-# base at its own lanes (`bf_b.frag`: `BFI.S R6.x, {4, 12, 0, 0}, R0, ..`
+# base at its own lanes (`0108_bf_b.frag`: `BFI.S R6.x, {4, 12, 0, 0}, R0, ..`
 # reads the MOV's `.x`), and a derivative its operand (`ds_a`..`ds_c`:
 # `DDX.F32 R3.xy, R2.x;` over a MUL of `R1.z` by `{2, 0, 0, 0}.x`, and its
 # own result read at one lane after: `MOV.F R5.xy, |R4.x|;`).  A BFE the
-# same as a BFI (`ld_rgba8_snorm.frag`: `BFE.S R3.x, {8, 0, 0, 0}, R1;`
+# same as a BFI (`0000_ld_rgba8_snorm.frag`: `BFE.S R3.x, {8, 0, 0, 0}, R1;`
 # reads the lane-x MOV bare).
-_LANEWISE_TOO = frozenset(("BFI", "DDX", "DDY", "BFE"))
+# `NOT` is lane-wise too, MEASURED (notes/114 \u00a745): `0114_bn_f.frag`
+# broadcasts a scalar and negates it, and the compiler prints
+# `NOT.U R1, R2.x;` -- the read of the replicated value rewritten to
+# one lane, which is exactly what f_7100069f90 does.
+_LANEWISE_TOO = frozenset(("BFI", "DDX", "DDY", "BFE", "NOT"))
+
+# READERS THE PASS LEAVES ALONE, MEASURED (notes/114 \u00a764).  `0114_md_b.frag`
+# broadcasts a scalar and takes it modulo a constant, and the compiler
+# prints `MOV.U R3, R1.x;` then `MOD.U R0.x, R3, {3, 0, 0, 0}.x;` -- the
+# read of the replicated value is NOT rewritten to one lane, where `NOT`'s
+# is (`0114_bn_f.frag`, \u00a745).  So `MOD` is neither lane-wise nor unmeasured:
+# the pass reaches it and does nothing.
+# THE PASS LEAVES THESE READERS' OPERANDS ALONE.  `MOD` was read that way
+# already; `ATOMB` and `ATOMS` are read the same way off
+# `post_tonemap_histogram.comp`, whose atomic is
+#     ATOMB.ADD.U32 R4.x, R3, sbo_buf1[R4.x];
+# with the added value BARE -- where the value's own line writes lane x
+# only (`MOV.S #52.x, ..`), so a rewritten reader would carry `.x`.
+# (notes/127 §2)
+_NOT_REWRITTEN = frozenset(("MOD", "ATOMB", "ATOMS"))
 
 
 def _line_opcodes(base):
@@ -585,6 +604,8 @@ def _replicate_reads(lines, spans, store_movs=frozenset()):
         if p is None or i in store_movs:
             continue                    # a store's MOV is not a node yet
         m = _lex.split_line_at(lines[i])
+        if m is None:
+            continue                    # operand-less (`BAR ;`): no sources
         rbase = p[0].split(".")[0]
         lanewise = ((rbase in _sched._LANEWISE or rbase in _LANEWISE_TOO)
                     and "(" not in m[1])
@@ -630,6 +651,12 @@ def _replicate_reads(lines, spans, store_movs=frozenset()):
             if not answers.pop():
                 continue
             if not lanewise:
+                if rbase in _NOT_REWRITTEN:
+                    continue
+                if ENV.get("G2S_REPDBG"):
+                    import sys as _s
+                    print("REPDBG reader=%r op=%r defline=%r sel=%r mask=%r"
+                          % (lines[i], s, dline, sel, mask), file=_s.stderr)
                 raise NotEstablished(
                     "f_7100069f90 on a %s reader: its slot masks are not "
                     "measured" % rbase)
@@ -666,7 +693,7 @@ _OUTPUT_BUILTIN_TEXT = {0: "result.position", 1: "result.pointsize",
 def _output_records(module, model):
     """THE OUTPUTS ARE RECORDS TOO (`g2s_trace_liveset`): each output
     variable is a vreg, numbered ahead of every temp in the module's order
-    of declaration -- `bl_289.vert`'s nine outputs are vregs 1..9 in
+    of declaration -- `0091_bl_289.vert`'s nine outputs are vregs 1..9 in
     OpVariable order (`vs_BINORMAL0`, attrib[3], first; `gl_PerVertex` 5th),
     `monster_a608a03b`'s colours 2..6 (the `$kill` pseudo-output 1).  Their
     printed names -> a key in that order, for the live array
@@ -795,7 +822,13 @@ class Finish(object):
     prints."""
 
     def _finish(self):
-        if not self.lines or not self.lines[-1].startswith("RET"):
+        # THE RETURN NEED NOT BE THE LAST LINE.  When the only return is
+        # inside a conditional the structural closers follow it:
+        # `debug_hiz.frag` ends `.. RET   (TR);  ENDIF;  END`.  So the test
+        # is on the last line that is not a closer (notes/116 §1).
+        _tail = [l for l in self.lines
+                 if l.rstrip(";").strip() not in ("ENDIF", "ELSE", "ENDREP")]
+        if not _tail or not _tail[-1].startswith("RET"):
             raise NotEstablished("a body that does not end in OpReturn")
         self.names = (frozenset(self.local_reg.values())
                       | frozenset(self.callnames))
@@ -978,7 +1011,7 @@ class Finish(object):
         if not ENV.get("G2S_UNSCHEDULED"):
             # a body the scheduler's model cannot place is REFUSED: the
             # creation order it would otherwise print is not the compiler's
-            # (`mc_n14.vert` printed its first block unscheduled before its
+            # (`0080_mc_n14.vert` printed its first block unscheduled before its
             # pass-1 cycle was found)
             raise NotEstablished(
                 "the scheduler's model does not place this body (pass 1 or "

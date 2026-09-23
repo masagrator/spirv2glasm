@@ -118,7 +118,7 @@ OPTION_ORDER = ("NV_unroll_none", "NV_internal", "NV_gpu_program_fp64",
 #                             (notes/tables.json).
 
 def _uses_64bit_or_sampler(module):
-    # A HANDLE THE BODY LOADS, not a declared type: the cut `mq_n8.frag`
+    # A HANDLE THE BODY LOADS, not a declared type: the cut `0091_mq_n8.frag`
     # declares `Tex0`/`Smpl0` and never samples, and its listing has no
     # `NV_gpu_program_fp64` (notes/87).  The handles are the 64-bit values.
     _handle_types = set(t for t, ins in module.types.items()

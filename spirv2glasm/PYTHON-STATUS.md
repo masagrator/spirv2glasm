@@ -14,149 +14,68 @@ raising* rather than by emitting something plausible — see `NotEstablished` in
 
 `tools/compare.py` emits what the Python side claims to know and compares it
 **line for line** against the oracle's listing, stopping at the first line the
-Python side does not claim.  Current figures (notes/114 and after):
+Python side does not claim.  Current figures (notes/114 §78 and notes/115-130):
 
 ```
-probes       (654)        exact 654   prefix-only 0     DIFFERS 0  failed 0
-corpus sample (120)       exact 120   prefix-only 0     DIFFERS 0  failed 0
-slice        (1,400)      exact 962   prefix-only 438   DIFFERS 0  failed 0
-                          1,093,657 of 1,848,903 listing lines (59.2%)
-full corpus  (14,630)     exact 10,179  prefix-only 4,451  DIFFERS 0  failed 0
-                          12,917,944 of 20,496,042 lines (63.0%)
-                          -- MEASURED BEFORE SS36..SS40, so it is the last
-                          full sweep and not the current state
-sample       (1,500)      exact 1,461   prefix-only 14     DIFFERS 25
-                          -- the current state, on the current tree
+probes        (680)   exact 680   prefix-only 0   DIFFERS 0   failed 0
+regression    (500)   exact 500   prefix-only 0   DIFFERS 0   failed 0
+the 60 that once     exact 13   prefix-only 0   DIFFERS 47   failed 0
+refused
 ```
 
-`DIFFERS` WAS 0 EVERYWHERE at the last full sweep, and IS NOT NOW.  That is
-not a regression: SS36 to SS38 removed the three commonest REFUSALS, and a
-module that used to stop after its declarations now emits its whole body --
-where it meets whatever the refusal had been hiding.  On a 1,500-module
-sample prefix-only fell from 71-in-200 to 14-in-1,500 and DIFFERS rose from
-0 to 25, of which SS39 and SS40 have since closed 11.
+Re-measured 2026-09-23: the 60 give 15,918 of 46,419 listing lines (34.3%),
+the probes 59,053 of 59,053 (100%) and the 120-shader corpus sample 120,351
+of 120,351 (100%).
 
-The 25 are TWO families, both narrowed to a mechanism and neither guessed
-at (notes/114 "Still open"): 18 modules missing one scalar copy, where a
-spelling that makes all 18 instruction-exact is refuted by its own probe,
-and 8 where the compiler gives two copies of one expression the same
-`node[36]` stamp.  notes/114 is the running list of what was read to get
-here -- forty causes, each with an off-switch and a probe -- plus the candidates that were read and DROPPED because they
-contradicted an already-measured rule.  What is left in that tail is the
-ALLOCATOR: `tools/p2check.py` runs our pass 2 on the compiler's own blocks
-and it reproduces the compiler's order everywhere it has been tried, and
-`tools/recnum.py` agrees with the compiler's record numbering, so the order
-and the numbering are not what differs -- the interference graph and the
-colouring are.
+**PREFIX-ONLY IS 0.**  That is the number this campaign was about.  It was
+60 over the whole corpus when the refusal census was taken (notes/114 §78)
+and it is now none: every module converts to the end.
 
-Compute shaders are converted too (they were refused by design earlier).
-Everything below this headline is the HISTORY of how the figures got here,
-kept as it was measured -- the older corpus runs are over the 10,328 modules
-an earlier `corpus/mkcorpus.py` produced (corpus/README.md), with 121 probes
-and a converter that refused compute.
+THE TWO SETS THAT GATE EVERY CHANGE:
 
-```
-probes  (121 shaders)     exact 87  prefix-only 34   DIFFERS 0  failed 0
-                         3032 of 4011 listing lines reproduced (75.6%)
+* `tools/probecheck.py` -- 680 probes, about a minute.  Run it FIRST after
+  any edit: it covers 680 distinct rules and tells you which one broke.
+* `tools/exact500b.stems` -- 500 corpus shaders drawn at random from the ones that
+  were exact, about 8 minutes.  Run it before calling a cause closed.
 
-corpus  (120 shaders)    exact 1   prefix-only 118  DIFFERS 0  failed 1
-                         13595 of 120120 listing lines reproduced (11.3%)
+`DIFFERS` is now the whole of the remaining work, and it is not a
+regression: a module that used to stop at its declarations now emits its
+body, where it meets whatever the refusal had been hiding.  Of the 60
+modules that refused, 13 are byte-exact and 47 differ somewhere in the
+body.
 
-corpus  (14,590 full)    exact 6   prefix-only 14584  DIFFERS 0  failed 0
-                         1884385 of 20474191 listing lines reproduced (9.2%)
-```
-
-The corpus figure was 1.9% and is now 10.7% because the `#var` and `#semantic`
-blocks -- the largest surface in a real shader's listing -- now cover the
-corpus instead of refusing most of it.  The whole-corpus sweeps:
-
-```
-tools/parvar.sh    #semantic + #var, 10,328 shaders   same 10,275  differ 0  refused 53
-tools/parcheck.sh  ATTRIB/OUTPUT,    10,328 shaders   same 10,290  differ 0  refused 38
-```
-
-Refusals are compute (out of scope by the brief), `gl_GlobalInvocationID`, and
-the tessellation-control `gl_out` block, whose output side has two binding
-kinds and prints two symbols per variable.
-
-`DIFFERS 0` on the corpus is new: the one long-standing disagreement
-(`map_1465b18f.frag`) is fixed, and it was not what it looked like.  An ARRAY
-member of a uniform block prints ONE `#var` line, for ELEMENT 0
-(`hlslcc_mtx4x4view_g[0]`), and the `used` column on it is element 0's -- that
-shader reads row 2.  The `failed 1` is the compute shader, which raises by
-design.
-
-The declaration block is measured separately, because `compare.py` stops at the
-first unclaimed line and a shader whose `#var` block is unclaimed never reaches
-it.  `tools/checkattrib.py` compares just the `ATTRIB`/`OUTPUT`/colour-output
-lines against the oracle:
-
-```
-probes   (90)          same 90     differ 0  refused 0
-corpus listings (517)  same 516    differ 0  refused 1   (compute)
-corpus, ALL (10,328)   same 10,290 differ 0  refused 38  (compute)
-```
-
-The `used` column is bit 8 of the symbol's flag word, set when the front end
-builds a symbol-REFERENCE node, and at `--opt-level none` it builds one for
-every operand it reads.  So the gate IS "the id appears as an operand", with
-the literal filter of `_id_args` -- an `OpExtInst`'s instruction number sits in
-an operand slot and is not an id.  A liveness fixpoint used to stand here; it
-was built on an inverted reading of one shader and gave the wrong answer on
-exactly that shader.  notes/18 records the correction and the measurement
-behind it (3,442 shaders, one disagreement, and the mention count wins it).
-
-Read that as: on every shader, every line the converter emits is the line the
-compiler emits, and it stops — cleanly, at a named gap — before the first thing
-whose rule has not been read.  `DIFFERS 0` is the number that matters at this
-stage; `exact 0` is the one that has to become 90 and 517.
-
-MEASURE THE CORPUS BY LINES, NOT BY SHADERS.  `tools/census.py` weights every
-refusal by the listing lines it costs, and it is what says where the work is:
-429k of the corpus's 604k lines are behind control flow, 78k behind loads that
-need a register and 62k behind local stores.  A refusal that closes 25 probe
-shaders and 1.9% of the corpus is not progress toward the goal.
-
-The corpus percentage is low for a reason that is not about correctness: a
-corpus listing runs to hundreds or thousands of lines and the part that is
-established is a fixed ~10-line header, so the same work reproduced 30.8% of a
-probe and 1.1% of a real shader when only the header was established.  The one failure is a compute shader, which
-raises `NotEstablished` by design.
-
-A gap and a bug look identical in a diff and are not the same thing, which is
-why `compare.py` counts them separately.
-
-**The corpus is what makes this measurement worth anything.**  Run against the
-90 probes alone the OPTION block looked complete; run against 517 real shaders
-it produced **244 differences** — two options no probe in the set can produce,
-because no probe has a shadow sampler or `EarlyFragmentTests`.  Probes make a
-rule readable; the corpus is what says the rule is finished.
+WHAT THE PROBES ARE NAMED.  Every probe carries the number of the note that
+reads it -- `0104_pu_j.vert`, `0129_...` -- so a listing and the reading
+behind it are one grep apart.  `0000_` means the probe predates the note
+that would name it.  `listings_open/` holds the ORACLE's listing for a probe
+whose rule is not implemented yet: it is evidence, not a gate, and moves
+into `listings/` when the rule is read.
 
 ## The body: where it now stands
 
-The body is still unemitted, and what changed this session is that it is no
-longer opaque.  `runtime/g2s_hook.c` gained `g2s_trace_node`, which dumps the
-IR node the two body line printers take, and `tools/nodedump.py` joins that
-stream to the listing by mnemonic.  One command now pairs every GLASM
-instruction of any shader with the node that produced it, which gives:
+The body is EMITTED, in full, for every module in the corpus.  This section
+used to say "still unemitted"; what it describes -- `tools/nodedump.py`
+pairing every GLASM line with the IR node that produced it -- is now the
+instrument the readings are made with rather than a map of unexplored
+ground.
+
+What it gives, and what the converter is built on:
 
 * the node layout -- opcode and modifier at +8, destination virtual register
   at +32, write mask at +48, operand links at +64/+72, destination operand at
   +136, flags at +152 (notes/29);
-* confirmation of `notes/glasm_opcodes.json`, decoded from the namer long
-  before: 0x93/0x47/0x18/0x0f/0x13/0x14/0x1a/0x1b/0x1c come back as `POW`,
-  `MOV`, `RET`, `REP`, `ENDREP`, `BRK`, `IF`, `ELSE`, `ENDIF` against the
-  lines that carry those mnemonics;
-* the register allocator, visible from both ends at once: `vr3..vr7` are
-  `R0..R4` and `vr10`, `vr13`, `vr16` are `R0` again, so `TEMP R0..R4` and
-  `# 5 R-regs` count PHYSICAL registers where the IR has eleven virtual ones;
-* two lowering shapes that hold on every probe dumped so far -- vector work is
-  scalarised and then gathered through one register, and writing an output is
-  always a `MOV` into a scratch register followed by a masked `MOV` out.
+* `node[36]` (the statement stamp) and `entry[68]` (pass 1's position), which
+  together are the scheduler's two keys (notes/51);
+* the register allocator from both ends at once: `vr3..vr7` are `R0..R4` and
+  `vr10`, `vr13`, `vr16` are `R0` again, so `TEMP R0..R4` and `# 5 R-regs`
+  count PHYSICAL registers where the IR has eleven virtual ones.
 
-None of that is implemented yet.  It is the map that was missing, and it was
-missing because the printers dispatch through a vtable and the static call
-graph stops there.
+ITS ONE BLIND SPOT, and it is load-bearing: the `--node` tracer is not on
+the printer that emits MEMORY and TEXTURE lines, so `nodedump` reports
+`<no node record>` for an `LDB`, an `STB` or a `TXG`.  Anything that turns
+on one of those needs `tools/p1cmp.py` (which compares the two pass-1
+orders and needs no printed order) instead -- see notes/120 §1, where a
+gather's opcode had to be recorded as UNREAD for exactly this reason.
 
 ## What is established, and on what
 
@@ -195,112 +114,44 @@ Worth noting what the fp64 option turned out to be *about*: not `double`, but
 64-bit registers — a bindless texture handle is 64 bits, and the listings show
 `LONG TEMP D0;` and `LDC.U64 D0.x, buf14[0];`.
 
-## What is left, in the order it should be done
+## What is left
 
-### 1. The `#var` block — the next ~35% of the lines
+**DIFFERS, and nothing else.**  The `#var` block, the declarations, the
+`used` column and the instruction body are all done -- that list, which this
+section used to hold, is history.  Every module now converts to the end, so
+the remaining work is entirely "our line is not the compiler's line".
 
-    #var float4 a0 : $vin.ATTR0 : ATTR0 : -1 : 1
-    #var ulong s : BUFFER[14][0] : buffer[14][0] : -1 : 1
+Where the differences are, from the 60 modules that once refused (47 of them
+differ) and from the corpus sweep:
 
-Six fields and four of them need rules that have not been read: the type
-spelling (`float4`, `ulong`), the `$vin.`/`$vout.` binding name, the register
-column (`ATTR0`, `COL0[0]`, `TESSCOORD[60]`, `buffer[14][0]`), and the trailing
-pair.  The ordering is not established either — a fragment probe lists outputs
-before inputs, a vertex probe lists its input first.
+* **THE REGISTER ALLOCATOR.**  Most surviving differs are a register number
+  or a `TEMP R0..Rn` count, not a wrong instruction.  Ours is a linear scan
+  (`glasmlib/alloc.py`); the compiler's is the transcribed one
+  (`py/regalloc.py`, `py/ifg.py`) and the two do not coalesce alike.
+* **THE PER-LOOP FLAG.**  `post_ssgi.frag` wants `SHORT TEMP H0, H1;` where
+  we declare `H0`: nested loops get a `continue` flag EACH, and `_CFLAG_REG`
+  models one per shader (notes/122).
+* **THE SHARED-MEMORY BODY.**  `probes/0119_bar_a.comp` and
+  `0127_atoms_a.comp` reach the end and differ by an extra MOV and a
+  register count; their oracle listings are in `listings_open/`
+  (notes/124).
+* **`listings_open/`** holds the rest: a probe whose rule is read but not
+  implemented keeps the oracle's listing there rather than in the gate.
 
-This is the **cgc symbol-table printer**, shared with the GLSL path, not the
-SPIR-V reader.  So it is read from the printer, and the SPIR-V side only has to
-supply the symbols — which `f_7100fd3160` already tells us it builds with
-GLSL-level names (`notes/03-variables.md`).
+## How to work on one
 
-### 2. The declaration block — DONE except TEMP
-
-`ATTRIB` / `OUTPUT` / `STORAGE` / `CBUFFER` and the fragment colour outputs are
-now READ, not measured, and they agree with the compiler exactly:
-
-```
-probes   (90)          same 90     differ 0  refused 0
-corpus listings (120)  same 119    differ 0  refused 1
-corpus, ALL (10,328)   same 10,290 differ 0  refused 38
-```
-
-The full-corpus sweep is the one that matters: it found two defects the 120
-listings and the 90 probes both missed -- a tessellation-control varying, and
-`gl_Position` written one component at a time (notes/17) -- and after those it
-is exact on every non-compute shader available.  `tools/parcheck.sh` runs it,
-resumably, in one stream per core.
-
-What made that possible, in order (notes/16, notes/17, notes/18):
-
-* `f_7100bd4810`, the binding-name formatter, transcribed arm for arm into
-  `py/binding.py` — including which arms return a single binding and which
-  return a range, which is what decides `name = binding;` against
-  `name[] = { binding[lo..hi] };`;
-* `f_7100bd1da0`, the slot-name table, decoded completely, which also pins the
-  eighteen register tables of notes/07 to the code;
-* `f_7100bdcc20`, the classifier, which says the block covers exactly the
-  symbols whose `used` bit is set and gives the kind→bit map;
-* `f_7100bdaef0`, the emitter loop itself — descending slots, the two merge
-  loops, the qualifier order, and the colour-output tail;
-* the (kind, slot) a stage's interface gets, measured with a new tracer
-  (`g2s_trace_sym`) that prints the pair from inside the `#var` printer so the
-  two streams pair positionally (`tools/bindmap.py`).
-
-`TEMP` is all that is left of the block and it is the register allocation:
-`program[1240 + 4*class]`, with the line shapes read out of `f_7100bdcd60`.
-
-### 3. The `used` column, which is now load-bearing
-
-`f_7100bdcc20` gates the declaration block on the same bit the `#var` line
-prints, so a wrong `used` is no longer a wrong comment — it is a wrong
-`ATTRIB` range.  `_live_ids` replaced the old "mentioned somewhere" test with a
-liveness fixpoint that follows stores, loads, call parameters and return values
-(notes/18).  It still over-reports on one shape — a value passed to a helper
-whose result is stored into a local that is read later, which the compiler
-still drops — and that is a named defect with a named example.
-
-### 4. The instruction body
-
-The 74 body handlers in `notes/dispatch.json`.  One piece of it is now read:
-the VOCABULARY.  Three chained functions name an OCG opcode -- `f_7100d57910`
-(shared-memory atomics) into `f_7100d56180` (buffer atomics and some texture
-forms) into `f_7100bd5734` (the GLASM printer's own, 520 entries) into
-`f_710005b5fc` (the generic namer, 212 entries) -- and all four tables are
-decoded into `notes/glasm_opcodes.json`, 232 opcodes with a name (notes/19).
-The generic namer's default arm is worth knowing: an operation with no GLASM
-spelling prints as `<<name>>` from a runtime table, so a listing containing
-`<<...>>` would be the compiler admitting it had no mnemonic.
-
-The line PRINTER has since been found, by tracing rather than grepping
-(notes/21, notes/23).  `f_710005c1dc` and `f_710005c71c` own the formats --
-`%-5s %s, %s;`, `%-5s BB%d (%s);`, `%-5s (TR);` and the rest -- `f_7100bd61f4`
-builds the mnemonic with its modifiers, and the vtable they dispatch through is
-dumped in notes/23: slot 72 the mnemonic, 136 the destination, 152 each source.
-`f_710003e48c` is the source-operand grammar, nine parts around a name.
-
-And behind that is the finding that sets the order of the remaining work:
-`f_710003d0f0` names a register `vr%d`/`un%d` BEFORE allocation and out of the
-allocator's own 224-byte records after it.  The body's operand names are the
-register allocator's output, not the IR's -- so the body needs, in order, the
-74 handlers, then the allocation, then the printer.
-
-The observed shape of the body, from listings and NOT in the emitter:
-
-* vector arithmetic stays vectorised (`MUL.F32 R0, a, b`, `DP4.F32 R0.x, a, b`);
-* stores into interface-block members scalarise, one `MOV.F` per component
-  through a temp;
-* the type suffix is `.F32`, where the GLSL path writes `.F`;
-* constants inline as `{2, 0, 0, 0}.x`;
-* a function call is `CAL BB<n>` with argument and return values copied through
-  registers;
-* `sqrt` is `RSQ` then `RCP`, per component — so GLSL.std.450 lowering is its
-  own layer.
-
-**None of that is in the emitter yet**, on purpose: the observations are from
-listings, and the brief is source first.  The reading order that follows the
-compiler's own grouping is the handler groups — one handler covers all four
-`GreaterThan` comparisons, one covers all seven multiply forms, one covers all
-32 image-sampling opcodes.
+1. `tools/compare.py <listing-dir> <spv-dir> --only <stems>` to see the
+   first line that differs.
+2. Write the MINIMAL probe for it, compile it, take the ORACLE's listing,
+   and see whether the probe reproduces the difference.  A corpus shader
+   confirms a whole listing; a probe says which rule the listing was
+   testing.  Twelve readings went in against corpus shaders alone in one
+   session and the first probe written for one of them failed immediately
+   (notes/121 §2).
+3. Read the rule -- from the recompiled source (`/home/claude/work/ex/src`),
+   the traces (`G2S_TRACE=1 G2S_ONLY=<gate>`), or `tools/nodedump.py` --
+   and only then edit.
+4. `tools/probecheck.py` (a minute), then the 500-shader set (8 minutes).
 
 ## The instrument that is not being used yet
 

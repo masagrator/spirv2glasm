@@ -49,7 +49,7 @@ def _int_literal(t, word):
     """THE IMMEDIATE PRINTER (f_710003dc10, 0x3dd80..0x3dda8): a value with
     bit 31 set prints `0x%x` when the type is unsigned (f_7100056a80) and
     `%d` -- negative -- otherwise; every other value prints `%d`.
-    `ff_a.frag`: `{0xffffffff, 0, 0, 0}`; the ImmediateConstBuffer's
+    `0088_ff_a.frag`: `{0xffffffff, 0, 0, 0}`; the ImmediateConstBuffer's
     `{1065353216, ..}`."""
     width, signed = t.args()[0], t.args()[1]
     if not signed and word & _UINT_SIGN_BIT and width == 32:
@@ -83,7 +83,7 @@ def _constant_operand(module, cid):
 
     A vector constant prints all four components in braces; a scalar one
     prints the same braces with the value in the first slot, which is what
-    `w1_mov.vert`'s `{0, 0, 0, 0}` is.
+    `0074_w1_mov.vert`'s `{0, 0, 0, 0}` is.
     """
     ins = module.constants.get(cid)
     if ins is None:
@@ -105,9 +105,9 @@ def _constant_source(module, cid, nres):
     and, when the instruction's RESULT is wider than one component, a `.x`
     that says every component reads slot 0:
 
-        k1_addc.vert  ADD.F32 R0,   vertex.attrib[0], {1, 2, 3, 4};
-        k2_mulc.vert  MUL.F32 R0,   vertex.attrib[0], {2, 0, 0, 0}.x;
-        cf_if.vert    SGT.F32 R0.x, vertex.attrib[0], {0, 0, 0, 0};
+        0041_k1_addc.vert  ADD.F32 R0,   vertex.attrib[0], {1, 2, 3, 4};
+        0041_k2_mulc.vert  MUL.F32 R0,   vertex.attrib[0], {2, 0, 0, 0}.x;
+        0026_cf_if.vert    SGT.F32 R0.x, vertex.attrib[0], {0, 0, 0, 0};
 
     The third is why `nres` is a parameter and not an assumption: a
     scalar-result comparison against a scalar constant prints NO swizzle, so
@@ -187,6 +187,40 @@ def _instruction_printer_input(kind, slot):
         if ent is not None and "%d" not in ent[0]:
             return ent[0]
     return None
+
+
+def _block_member_operand(module, vid, idx, model):
+    """`(operand, components)` for a MEMBER of an input interface BLOCK.
+
+    A block's members each carry their own Location (notes/114 \u00a746), so
+    a member IS the attribute at its own location -- the same string
+    `_interface_operand` builds for a plain located variable.  Returns None
+    for anything else, including a block with no per-member Location.
+    """
+    import binding
+    if idx is None:
+        return None
+    ins = module.globals.get(vid)
+    if ins is None or ins.operands[2] != StorageClass.Input:
+        return None
+    pt = module.types.get(ins.result_type)
+    if pt is None or not pt.operands:
+        return None
+    sid = pt.operands[-1]
+    st = module.types.get(sid)
+    if st is None or st.opcode != Op.OpTypeStruct:
+        return None
+    idx = int(idx)
+    if not 0 <= idx < len(st.args()):
+        return None
+    loc = module.member_decoration(sid, idx, Decoration.Location)
+    if loc is None:
+        return None
+    kind = _stage_kind(model, StorageClass.Input)
+    form = binding.binding_form(kind, loc[0], ".")
+    if form is None or form[0] is None or form[1] is None:
+        return None
+    return ("%s[%d]" % (form[0], loc[0]), st.args()[idx])
 
 
 def _interface_operand(module, vid, model):
@@ -274,6 +308,47 @@ def _per_vertex_location_operand(module, pid, model, by_result):
     return (base, int(c))
 
 
+def _per_vertex_dynamic_location_operand(module, pid, model, by_result):
+    """A PER-VERTEX USER INPUT read at a DYNAMIC vertex index, as
+    (alias, index id, location), or None.
+
+    `water_00540147.tesc` reads `vs_NORMAL0[gl_InvocationID]` and prints
+
+        MOV.S R1.x, primitive.invocation;
+        MOV.F R18.xyz, vertex_attrib[R1.x][1];
+
+    -- the index carried into a register, then the element taken out of the
+    ATTRIB declaration's alias, which for a user input is the RANGED form
+    (`ATTRIB vertex_attrib[] = { vertex.attrib[0..9] };`) and so carries a
+    SECOND index, the location.  `_per_vertex_operand` above takes the
+    built-in members of `gl_in[]`, whose alias is a single binding and has
+    no second index.  (notes/130)
+    """
+    import os as _os
+    if _os.environ.get("G2S_NOPVDYNLOC"):
+        return None
+    ch = by_result.get(pid)
+    if ch is None or ch.opcode not in ACCESS_CHAINS or len(ch.args()) != 2:
+        return None
+    args = ch.args()
+    gins = module.globals.get(args[0])
+    if gins is None or gins.operands[2] != StorageClass.Input:
+        return None
+    if _scalar_value(module, args[1]) is not None:
+        return None                     # a constant index is another shape
+    loc = module.decoration(args[0], Decoration.Location)
+    if loc is None:
+        return None
+    kind = _stage_kind(model, StorageClass.Input)
+    if kind not in (GEOMETRY_INPUT_KIND, _TESC_INPUT_KIND, _TESE_INPUT_KIND):
+        return None
+    import binding
+    form = binding.binding_form(kind, loc[0], "_")
+    if form is None or form[0] is None or form[1] is None:
+        return None
+    return (form[0], args[1], loc[0] - form[1])
+
+
 def _per_vertex_operand(module, pid, model, by_result):
     """`gl_in[k].member` in the tessellation or geometry stages, or None.
 
@@ -319,7 +394,7 @@ def _per_vertex_operand(module, pid, model, by_result):
             return None
     if k is None:
         # A DYNAMIC vertex index (notes/63): the operand is the ATTRIB
-        # declaration's alias, indexed by a register -- `ts_ctrl.tesc`
+        # declaration's alias, indexed by a register -- `0007_ts_ctrl.tesc`
         # prints `vertex_position[R0.x]`.  Returned as (alias, index id) for
         # the load to build.
         import binding

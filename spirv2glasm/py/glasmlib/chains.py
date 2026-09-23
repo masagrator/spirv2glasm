@@ -29,7 +29,10 @@ def _output_operand(module, vid, model):
     loc = module.decoration(vid, Decoration.Location)
     if loc is None:
         return None
-    kind = _stage_kind(model, StorageClass.Output)
+    # WHICH OF TESSELLATION CONTROL'S TWO OUTPUT KINDS is the `Patch`
+    # decoration, as it is for the `#var` rows (notes/117 §1).
+    kind = _stage_kind(model, StorageClass.Output,
+                       module.decoration(vid, Decoration.Patch) is not None)
     form = binding.binding_form(kind, loc[0], ".")
     if form is None:
         return None
@@ -45,7 +48,7 @@ def _colour_output_name(module, vid, model):
     THE STAGE MATTERS AND USED TO BE IGNORED.  A vertex shader's location
     output is `result.attrib[N]`, not `result_colorN` -- `_output_operand()`
     names it, out of the same binding namespace the OUTPUT declaration
-    uses -- and this claimed it first, so `wb2_add.vert` came out storing to
+    uses -- and this claimed it first, so `0041_wb2_add.vert` came out storing to
     `result_color0`.  Only the fragment stage has colour outputs.
     """
     if model != ExecutionModel.Fragment:
@@ -64,7 +67,7 @@ def _output_chain(module, pid, model, by_result):
     same shape for `result.attrib[N]` and friends, and it exists because
     glslang scalarises a swizzled destination in the SPIR-V itself:
     `v.zw = a0.xy` is two `OpAccessChain` + `OpStore` pairs with constant
-    indices, not one masked store (`st3_dstswz.vert`).
+    indices, not one masked store (`0044_st3_dstswz.vert`).
     """
     ins = by_result.get(pid)
     if ins is None or ins.opcode not in ACCESS_CHAINS:
@@ -207,7 +210,7 @@ def _position_chain(module, pid):
 #   * the mnemonic builder `f_7100bd61f4` appends the WIDTH from that mask
 #     (0xbd694c / 0xbd6cec): `X4` when byte 2 or 3 (z, w) is enabled, else
 #     `X2` when byte 1 (y) is, else nothing -- which is why a vec3 is
-#     `LDC.F32X4 R0.xyz` (`ld_v3.frag`) and a scalar `LDC.F32 R0.x`;
+#     `LDC.F32X4 R0.xyz` (`0070_ld_v3.frag`) and a scalar `LDC.F32 R0.x`;
 #   * the type part is the node type's spelling in the image's long suffix
 #     table (notes/37, `type_suffix.json`) without its dot: F32, S32, U32,
 #     U64.  Measured on `ld_f1/ld_i1/ld_u1.frag` and every LDC/LDB line of
@@ -249,9 +252,9 @@ class _Walk(object):
 def _dynamic_step(module, walk, a):
     """ONE DYNAMIC INDEX is allowed, and only into an array: the byte offset
     becomes `index * stride` in a register and the load indexes the buffer by
-    it (`if_arr.vert`).  A dynamic index into a struct has no stride to scale
+    it (`0052_if_arr.vert`).  A dynamic index into a struct has no stride to scale
     by, so it still refuses.  TWO are allowed since notes/89: a structured
-    buffer's `buf[i].value[j]` scales both and adds them (`sb_b.frag`), and
+    buffer's `buf[i].value[j]` scales both and adds them (`0089_sb_b.frag`), and
     `dyn` is then the list of both, outermost first.  False to refuse."""
     t = module.types.get(walk.tid)
     if t is None or t.opcode not in ARRAY_TYPES:
@@ -288,7 +291,7 @@ def _constant_step(module, walk, idx):
           and not walk.rowmajor and not ENV.get("G2S_NOMATCOLUMN")):
         # A COLUMN OF A COLUMN-MAJOR MATRIX is `MatrixStride` bytes on
         # (the member's decoration, carried through any array of matrices):
-        # `ld_mx.vert`'s `m[1].y`, m at 16 with stride 16, prints `LDC.F32X2
+        # `0103_ld_mx.vert`'s `m[1].y`, m at 16 with stride 16, prints `LDC.F32X2
         # R0.y, buf0[32];` -- the column's load read at its component, as a
         # vector member's is (notes/104 §7).  A row-major matrix's column
         # is not contiguous and is refused.
@@ -317,7 +320,7 @@ def _walk_chain(module, args, tid):
                 and n_ == len(args) - 1 and 0 <= int(v) < _t0.args()[1]):
             # A COMPONENT OF A VECTOR MEMBER is the member's load read
             # through that component (notes/76): `v.z` prints `LDC.F32X4
-            # R0.z, buf0[16];` (`pl_c.vert`), the mask narrowed to the
+            # R0.z, buf0[16];` (`0076_pl_c.vert`), the mask narrowed to the
             # component by `_narrow_loads`.
             walk.comp = int(v)
             break
@@ -325,6 +328,82 @@ def _walk_chain(module, args, tid):
               else _constant_step(module, walk, int(v)))
         if not ok:
             return None
+    return walk
+
+
+def _shared_size(module, tid):
+    """The size in bytes of a Workgroup type, laid out naturally.
+
+    A Workgroup struct carries no `Offset` and its arrays no `ArrayStride`
+    -- those decorations are for BLOCKS -- so the strides come from the
+    types: a 32-bit scalar is 4, a vector is its count, an array is its
+    length times its element, a struct the sum of its members.  That is
+    what `post_tonemap_update.comp`'s `shared_mem[R0.x + 256]` needs (its
+    element is one uint, so 256 bytes is element 64) and what its
+    `SHARED_MEMORY 512;` states for 128 of them.  (notes/124 §2)
+    """
+    t = module.types.get(tid)
+    if t is None:
+        return None
+    if t.opcode in SCALAR_TYPES:
+        return 4
+    if t.opcode == Op.OpTypeVector:
+        _e = _shared_size(module, t.args()[0])
+        return None if _e is None else _e * t.args()[1]
+    if t.opcode in ARRAY_TYPES:
+        _e = _shared_size(module, t.args()[0])
+        _n = module.constants.get(t.args()[1]) if len(t.args()) > 1 else None
+        if _e is None or _n is None:
+            return None
+        return _e * int(_n.args()[-1])
+    if t.opcode == Op.OpTypeStruct:
+        _s = 0
+        for _m in t.args():
+            _e = _shared_size(module, _m)
+            if _e is None:
+                return None
+            _s += _e
+        return _s
+    return None
+
+
+def _walk_shared(module, args, tid):
+    """`_walk_chain` for shared memory, with the natural layout above."""
+    walk = _Walk(tid)
+    for n_, a in enumerate(args[1:], 1):
+        v = _scalar_value(module, a)
+        t = module.types.get(walk.tid)
+        if t is None:
+            return None
+        if (v is not None and t.opcode == Op.OpTypeVector
+                and n_ == len(args) - 1 and 0 <= int(v) < t.args()[1]):
+            walk.comp = int(v)
+            break
+        if t.opcode == Op.OpTypeStruct:
+            if v is None:
+                return None
+            _off = 0
+            for _m in t.args()[:int(v)]:
+                _e = _shared_size(module, _m)
+                if _e is None:
+                    return None
+                _off += _e
+            walk.off += _off
+            walk.tid = t.args()[int(v)]
+            continue
+        if t.opcode not in ARRAY_TYPES:
+            return None
+        _st = _shared_size(module, t.args()[0])
+        if _st is None:
+            return None
+        if v is None:
+            if isinstance(walk.dyn, list):
+                return None
+            walk.dyn = ((a, _st) if walk.dyn is None
+                        else [walk.dyn, (a, _st)])
+        else:
+            walk.off += int(v) * _st
+        walk.tid = t.args()[0]
     return walk
 
 
@@ -337,7 +416,7 @@ def _loaded_count(module, tid):
         return t.args()[1]
     if t.opcode == Op.OpTypeMatrix:
         # A MATRIX IS LOADED A COLUMN AT A TIME, so the suffix is the
-        # COLUMN's: `if_mat.vert` loads `mat4 m` as four `LDC.F32X4`.  The
+        # COLUMN's: `0000_if_mat.vert` loads `mat4 m` as four `LDC.F32X4`.  The
         # type returned is still the matrix's, which is how the caller knows
         # one line will not do.
         col = module.types.get(t.args()[0])
@@ -364,6 +443,23 @@ def _buffer_chain(module, pid, insns_by_result):
     if var is None:
         return None
     storage = var.operands[2]
+    # SHARED MEMORY WALKS THE SAME WAY, and prints `LDS`/`STS` against
+    # `shared_mem` instead of `LDB`/`STB` against `sbo_buf<n>`:
+    # `post_tonemap_update.comp` has `LDS.U32 R2.x, shared_mem[R0.x + 256];`
+    # and `STS.U32 R1, shared_mem[R4.x];` -- the same address the block
+    # forms build, with no binding number because there is one shared
+    # region.  (notes/124 §2)
+    if storage == StorageClass.Workgroup:
+        ptr = module.types.get(var.result_type)
+        walk = _walk_shared(module, args, ptr.operands[2])
+        if walk is None:
+            return None
+        count = _loaded_count(module, walk.tid)
+        suffix = _load_suffix(module, walk.tid, count) if count else None
+        if suffix is None:
+            return None
+        return ("LDS.%s" % suffix, "shared_mem", walk.off, walk.tid,
+                walk.dyn, walk.comp)
     if storage not in BLOCK_STORAGE:
         return None
     binding_ = module.decoration(args[0], Decoration.Binding)

@@ -25,11 +25,24 @@ BUILTIN_SEMANTIC = {
     "gl_ClipDistance":  ("$vout.CLP0",     "CLP0"),
     "gl_CullDistance":  ("$vout.CUL0",     "CUL0"),
     "gl_FragCoord":     ("$vin.WPOS",      "WPOS"),
+    # `#var float gl_FragDepth : $vout.DEPR : DEPR : -1 : 1`, read off
+    # `post_depthcopy.frag`.  The bare register is NOT an exception: the
+    # fragment OUTPUT kind 0x63 is one of the five in `UNINDEXED_KIND`
+    # below, which notes/20 read off the printer.  (notes/115 §1 corrects
+    # §79, which said there were three and called this a contradiction.)
+    "gl_FragDepth":     ("$vout.DEPR",     "DEPR"),
     "gl_FrontFacing":   ("$vin.FACE_FLAT", "SSA"),
     "gl_TessCoord":     ("$vin.TESSCOORD", "TESSCOORD"),
     "gl_InvocationID":  ("$vin.THREAD_ID", "INVOCATIONID"),
     "gl_InstanceIndex": ("$vin.INSTANCEINDEX", "INSTANCEIDX"),
-    # the compute stage's inputs (notes/111, `cb_a.comp`: all five read)
+    # READ from the listing, not inferred from its sibling: the `vfx_trail_*`
+    # vertex shaders print `#var int gl_VertexIndex : $vin.VERTEXINDEX :
+    # VERTEXIDX : -1 : 1`.  Its slot (0x3e, kind 0x07) was already read and
+    # sat in `BUILTIN_SLOT` with nothing to reach it; kind 0x07 is one of the
+    # three that print the register BARE, so `VERTEXIDX` carries no index,
+    # which is what the listing shows.  (notes/114 §79)
+    "gl_VertexIndex":   ("$vin.VERTEXINDEX",  "VERTEXIDX"),
+    # the compute stage's inputs (notes/111, `0111_cb_a.comp`: all five read)
     "gl_NumWorkGroups":        ("$vin.GBLSIZE", "GBLSIZE"),
     "gl_WorkGroupID":          ("$vin.CTAID",   "CTAID"),
     "gl_LocalInvocationID":    ("$vin.LCLID",   "LCLID"),
@@ -48,7 +61,9 @@ BUILTIN_NUMBER = {
     "gl_InvocationID": BuiltIn.InvocationId,
     "gl_TessCoord": BuiltIn.TessCoord, "gl_FragCoord": BuiltIn.FragCoord,
     "gl_FrontFacing": BuiltIn.FrontFacing,
+    "gl_FragDepth": BuiltIn.FragDepth,
     "gl_InstanceIndex": BuiltIn.InstanceIndex,
+    "gl_VertexIndex": BuiltIn.VertexIndex,
     "gl_NumWorkGroups": BuiltIn.NumWorkgroups,
     "gl_WorkGroupID": BuiltIn.WorkgroupId,
     "gl_LocalInvocationID": BuiltIn.LocalInvocationId,
@@ -99,7 +114,7 @@ STAGE_KIND = {
     ExecutionModel.Geometry: (0x30, 0xc0),
     ExecutionModel.Fragment: (0x37, 0xcf),
     # compute: built-in inputs only, kind 0x68 (`g2s_trace_sym` on
-    # `cb_a.comp`: bindkind148=0x68 for all five), and no outputs
+    # `0111_cb_a.comp`: bindkind148=0x68 for all five), and no outputs
     ExecutionModel.GLCompute: (0x68, None),
 }
 
@@ -121,11 +136,18 @@ BUILTIN_SLOT = {
     0x6f: {BuiltIn.Position: 0x20, BuiltIn.PointSize: 0x30,          # vertex
            BuiltIn.ClipDistance: 0x31, BuiltIn.CullDistance: 0x42},  # outputs
     0x37: {BuiltIn.FragCoord: 0x2d, BuiltIn.FrontFacing: 0x36},     # frag in
+    # fragment outputs: `gl_FragDepth`'s index is -1 in the oracle's own
+    # call (above), so it prints bare
+    0xcf: {BuiltIn.FragDepth: -1},
     0x30: {BuiltIn.Position: 0x20, BuiltIn.PointSize: 0x30,          # geometry
            BuiltIn.ClipDistance: 0x31, BuiltIn.CullDistance: 0x49},  # inputs
     0xc0: {BuiltIn.Position: 0x20, BuiltIn.PointSize: 0x30,          # geometry
            BuiltIn.ClipDistance: 0x31},                              # outputs
-    0x33: {BuiltIn.Position: 0x20, BuiltIn.InvocationId: 0x3b},     # tesc in
+    # tesc in.  Point size and clip read off the `water_*.tesc` rows
+    # `gl_in[0].gl_PointSize .. PSIZ[48]` and `gl_ClipDistance[0] ..
+    # CLP0[49]` (notes/117 §1).
+    0x33: {BuiltIn.Position: 0x20, BuiltIn.InvocationId: 0x3b,
+           BuiltIn.PointSize: 0x30, BuiltIn.ClipDistance: 0x31},
     # The tessellation-evaluation input kind's per-vertex block, read off the
     # register column: `HPOS[32]`, `PSIZ[48]`, `CLP0[49]`, `TESSCOORD[60]`.
     0x35: {BuiltIn.Position: 0x20, BuiltIn.PointSize: 0x30,
@@ -139,8 +161,11 @@ BUILTIN_SLOT = {
     0xbb: {BuiltIn.Position: 0x20, BuiltIn.PointSize: 0x30,
            BuiltIn.ClipDistance: 0x31},
     0xbd: {BuiltIn.TessLevelInner: 0x20, BuiltIn.TessLevelOuter: 0x22},
-    0xb7: {BuiltIn.Position: 0x20},                         # per-vertex out
-    # compute inputs: `g2s_trace_sym`'s reg144 on `cb_a.comp` -- 0
+    # per-vertex out.  Point size, clip and cull read off the `water_*.tesc`
+    # registers: `PSIZ[48]`, `CLP0[49]`, `CUL0[64]` on the write side.
+    0xb7: {BuiltIn.Position: 0x20, BuiltIn.PointSize: 0x30,
+           BuiltIn.ClipDistance: 0x31, BuiltIn.CullDistance: 0x40},
+    # compute inputs: `g2s_trace_sym`'s reg144 on `0111_cb_a.comp` -- 0
     # NumWorkGroups, 1 WorkGroupID, 2 LocalInvocationID, 3
     # GlobalInvocationID, 4 LocalInvocationIndex -- which are the slots the
     # instruction printer's kind-0x68 arm names `invocation.groupcount`,
@@ -166,7 +191,13 @@ BUILTIN_SLOT = {
 # 0xbb was 0x42 here before, copied from the vertex output kind rather than
 # measured; nothing in the corpus had exercised it.
 CULL_BASE = {0x6f: 0x42, 0xc0: 0x42, 0xbb: 0x40, 0x35: 0x4a,
-             0x30: 0x49, 0x37: 0x4c}
+             0x30: 0x49, 0x37: 0x4c,
+             # tesc in: `gl_in[0].gl_CullDistance[0] .. CUL0[73]` with NO
+             # clip distance in use, so the base is 73 -- the same number
+             # the geometry input kind 0x30 has.  One measurement does not
+             # separate base from count; recorded as 0xbb's was.
+             # (notes/117 §1)
+             0x33: 0x49}
 
 UBO_KIND_BASE = 0x170
 SSBO_KIND_BASE = 0x1c0
@@ -190,12 +221,20 @@ def _register(kind, name, slot):
     """
     if kind in UNINDEXED_KIND or slot is None:
         return name
+    # A NEGATIVE INDEX DROPS THE NUMBER ENTIRELY (notes/20).  `gl_FragDepth`
+    # is the case: its kind is 0xcf, which is NOT one of UNINDEXED_KIND, and
+    # the listing still prints a bare `DEPR` -- because the index the printer
+    # is handed is -1.  Read from the oracle under `G2S_ONLY=sym` on
+    # `post_depthcopy.frag`: the call carrying name id 0x243 (`DEPR`) has
+    # x7 = 0xffffffff.  (notes/115 §1)
+    if slot < 0:
+        return name
     if kind == GEOMETRY_INPUT_KIND:
         return "%s[%d][%d]" % (name, (slot >> 8) & 0xff, slot & 0xff)
     return "%s[%d]" % (name, slot)
 
 
-def _location_semantic(model, storage, loc, flat):
+def _location_semantic(model, storage, loc, flat, patch=None):
     """A user in/out variable's semantic and register, from its Location.
 
     Checked against 4,511 such lines over the corpus with zero disagreement:
@@ -205,7 +244,7 @@ def _location_semantic(model, storage, loc, flat):
         output, fragment $vout.COL<loc>          COL<loc>[<loc>]
     """
     suffix = "_FLAT" if flat else ""
-    kind = _stage_kind(model, storage)
+    kind = _stage_kind(model, storage, patch)
     if storage == StorageClass.Input:
         return ("$vin.ATTR%d%s" % (loc, suffix),
                 _register(kind, "ATTR%d" % loc, loc))
@@ -218,7 +257,7 @@ def _location_semantic(model, storage, loc, flat):
                          % storage)
 
 
-def _stage_kind(model, storage):
+def _stage_kind(model, storage, patch=None):
     """The binding KIND an interface variable of this stage and direction has.
 
     notes/17.  Tessellation control's output side is the one that has two
@@ -230,6 +269,14 @@ def _stage_kind(model, storage):
         raise NotEstablished("execution model %d has no established binding "
                              "kinds" % model)
     kind = pair[0] if storage == StorageClass.Input else pair[1]
+    # WHICH OF THE TWO is the `Patch` decoration, and the listing shows the
+    # pair on one shader: `water_00540147.tesc` prints its patch outputs
+    # `gl_TessLevelInner[0] : $ppvout.INNER032` (kind 0xbd) and its
+    # per-vertex ones `hs_BINORMAL0-out : $vout.ATTR3 : ATTR3[3]` (0xb7).
+    # A caller that cannot say passes None and still gets the refusal.
+    # (notes/117 §1)
+    if kind is None and patch is not None:
+        return TESC_PATCH_KIND if patch else TESC_PER_VERTEX_KIND
     if kind is None:
         raise NotEstablished("this stage's outputs have two binding kinds "
                              "(per-vertex and per-patch) and which one a "
@@ -265,7 +312,7 @@ def _builtin_semantic(model, storage, name, clip_used=0):
         # 0x411e8): kind 0x30 takes `%s%s[%d][%d]` (0x41410, the format at
         # 0x114bc53) with the register word's byte 1, the vertex (0 for the
         # `gl_in[0]` row), then byte 0, the slot -- `$vin.CLP0[0][49]`,
-        # `$vin.CUL0[0][73]` (g01.geom, notes/65); the other indexed kinds
+        # `$vin.CUL0[0][73]` (0046_g01.geom, notes/65); the other indexed kinds
         # take `%s%s%d` (0x41368, 0x1166651) -- `$vin.CLP049`.
         return "%s[%d][%d]" % (sem, 0, slot)
     return "%s%d" % (sem, slot)
