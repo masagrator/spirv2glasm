@@ -11,7 +11,8 @@ explains why each piece exists. This file is the checklist.
   .github/workflows/probes.yml   CI: the probe check (§6)
   spirv2glasm/                   the project; everything else is in here
   spirv2glasm/probes.7z          the probe sources and their expected listings
-                                 (probes/ and listings/ inside, §5)
+                                 (probes/, listings/ and listings_open/
+                                 inside, §5)
   spirv2glasm/tools.7z           tools/, all but probecheck.py
   spirv2glasm/tools/probecheck.py  the probe check, a plain file: the workflow
                                  runs it
@@ -116,9 +117,9 @@ to C by elf2c. To build it:
    ./poll125.sh mk 110            # repeat until it prints mk=0
    ```
 
-Check the result: `build/spirv2glasm --opt-level none probes/op_mul.vert.spv`
+Check the result: `build/spirv2glasm --opt-level none probes/0011_op_mul.vert.spv`
 must print a listing whose first line is a progress banner and whose rest
-equals `listings/op_mul.vert.glasm`.
+equals `listings/0011_op_mul.vert.glasm`.
 
 `G2S_VREGAT=<hex addr>[,<addr>...]` narrows `g2s_dump_vregs` (and the `ifg`
 dump inside it) to one of the nineteen functions it is patched onto: it
@@ -163,11 +164,14 @@ cp $(cat /path/to/corpus_sample.txt) /home/claude/work/corpus_spv/
     /home/claude/work/corpus_spv /home/claude/work/corpus_listings 110
 ```
 
-## 4. The slice
+## 4. The slice, and the full listing set
 
-The slice is 1,400 corpus modules, including compute, the wider regression
-net the work reports on.  Its name list is corpus data too and is kept with
-the corpus, not in the package.
+The slice is 1,400 corpus modules, including compute.  It was the wider
+regression net while the full set of listings did not exist; it is kept
+because several notes report on it, but THE REGRESSION NET IS NOW
+`tools/exact500b.stems` (500 modules drawn from the exact ones) and the
+measurement of record is the full 14,630.  Its name list is corpus data too
+and is kept with the corpus, not in the package.
 
 ```sh
 S=/path/to/scratch
@@ -179,6 +183,24 @@ cd /home/claude/work/corpus_spv_full && cp $(cat /path/to/slice.txt) $S/slice_sp
 
 `mklistings_run.sh` explains why it runs in the foreground and resumes where
 it stopped.
+
+### The full set: what `exact500b.sh` and `fullcmp.py` read
+
+Both gates read a directory PAIR holding all 14,630 modules and all 14,630
+oracle listings -- `$S/full_spv` and `$S/full_lst` at the paths the work was
+done at, which is what `tools/exact500b.sh`'s `S=` defaults to.  Build them
+the same way as the slice, over the whole corpus rather than a name list:
+
+```sh
+S=/path/to/scratch
+mkdir -p $S/full_spv $S/full_lst
+cp /home/claude/work/corpus_spv_full/*.spv $S/full_spv/
+/home/claude/work/proj/spirv2glasm/tools/mklistings_run.sh $S/full_spv $S/full_lst 110
+```
+
+That is about two hours of oracle runs, once; every sweep after it is free.
+`tools/fullcmp.py` (`OUT=<tsv>`) is the sweep, in chunks of 200 appended as
+it goes, so it resumes from its own output after the turn boundary kills it.
 
 ## 5. The probes
 
@@ -200,21 +222,43 @@ To ship changed probes, repack the two folders (no `.spv`):
 7z a -t7z -mx=9 probes.7z probes listings -xr'!*.spv'
 ```
 
-`notes/pending_probes/` holds probes whose oracle listings are known but that
-the converter does not produce yet: each source with its `.glasm`. When one
-becomes exact, move it into `probes/` and `listings/`, first checking that its
-name does not collide with an existing probe.
+`listings_open/` holds the ORACLE's listing for a probe that IS in `probes/`
+but whose rule is read and not yet implemented -- evidence, not a gate.  It
+ships in `probes.7z` with the other two.  Move a file from it into
+`listings/` when the rule lands; never delete one to make the suite green.
+
+`notes/pending_probes/` is the other holding pen, for a probe that is not in
+the suite at all yet: source and `.glasm` together.  When one becomes exact,
+move both into `probes/` and `listings/`, first checking that its name does
+not collide with an existing probe.  Its own README says what is in it.
+
+A probe is named for the note that reads it (`0119_bar_a.comp`); `0000_`
+marks one older than the note that would name it.  A `.glasm` kept without
+its source cannot be re-measured, so keep the pair.
 
 ## 6. The checks, and the numbers to expect
 
-| command | what | expected now (notes/111) |
+| command | what | expected now (notes/115-130) |
 |---|---|---|
-| `sh tools/check.sh` | corpus sample + probes, whole listing (about 90 s) | corpus exact 120/120, probes 654/654, DIFFERS 0 |
-| `python3 tools/probecheck.py ...` | probes from source (also what CI runs) | 654 of 654 probes match |
-| `python3 tools/compare.py $S/slice_lst $S/slice_spv` | the slice (about 20 min, §7) | see PROGRESS.md for the last run; DIFFERS 0 |
-| `python3 tools/compare.py <lst> <spv> -j 2 --only stems.txt` | the same, in 2 worker processes, only the listed modules (`x.frag`, one per line) | |
+| `python3 tools/probecheck.py -j 2` | THE FIRST GATE: every probe from source, about a minute | `680 of 680 probes match`; failures print as `FAIL <probe>: <reason>` |
+| `sh tools/exact500b.sh` | THE SECOND GATE: 500 corpus shaders drawn from the exact ones, about 8 min | `exact 500  prefix-only 0  DIFFERS 0  failed 0` |
+| `sh tools/check.sh` | corpus sample + probes, whole listing (about 90 s) | corpus exact 120/120, probes 680/680 |
+| `python3 tools/opcoverage.py` | every opcode the oracle accepts that the corpus never exercises, rebuilt into `opcov/` | `ACCEPTED` for 49 modules, `REJECTED` for the two that crash the compiler (`opcov/README.md`) |
+| `python3 tools/mkglasmref.py --check` | GLASM-REFERENCE.md against the opcode table, the listings and the per-opcode evidence | `GLASM-REFERENCE.md is current`; exit 1 and a `DRIFT:` line per row whose verdict the listings disagree with |
+| `python3 tools/covercheck.py` | the six cover modules against the full sweep's opcode set | `MISSING from the cover set (0):` -- anything else means a cover module stopped reaching an opcode |
+| `MODULES=opcov/cover OUT=notes/opcode_evidence_cover.json python3 tools/opcodemap.py` | rebuild the per-opcode evidence from the six cover modules, about a minute | `135 opcodes observed over 6 modules` |
+| `python3 tools/compare.py <lst> <spv> -j 2 --only stems.txt` | only the listed modules (`x.frag`, one per line); `G2S_TSV=<path>` also writes one row per module | |
+| `OUT=<tsv> python3 tools/fullcmp.py` | every module classified, resumable, ~4 h | 2026-09-23: `exact 14,208  prefix-only 0  DIFFERS 422  failed 0` |
+| `python3 tools/diffkind.py --tsv <tsv> <lst> <spv>` | splits the DIFFERS into RENAME / REORDER / MISSING | one line per stem and a count; the 422 have not been split yet |
+| `ONLY=<stems> OUT=<tsv> python3 tools/refcensus.py` | the PREFIX census: one line per module, its refusal or empty.  Needs no oracle listing | should be empty now |
 
-`DIFFERS` must stay 0 everywhere.
+**PREFIX-ONLY MUST STAY 0**, on both gates.  That is the invariant now.
+
+`DIFFERS` is NOT 0 any more and that is not a regression: it was 0 only
+because a module that hit an unread rule stopped at its declarations instead
+of emitting a body.  With the refusals closed, the body is emitted and meets
+whatever the refusal had been hiding.  Both gates are at DIFFERS 0 and must
+stay there; the corpus at large is not, and that is the work.
 
 ## 7. Long jobs
 

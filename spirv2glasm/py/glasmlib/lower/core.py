@@ -129,17 +129,22 @@ class Core(object):
         "_arm_image_write", "_arm_image_read", "_arm_image_query",
         "_arm_extract", "_arm_construct",
         "_arm_derivative", "_arm_dot", "_arm_int_binary",
-        "_arm_bitfield_insert", "_arm_any", "_arm_logical",
+        "_arm_bitfield_insert", "_arm_bitfield_extract", "_arm_not",
+        "_arm_any", "_arm_logical", "_arm_logical_not",
         "_arm_convert",
         "_arm_compare",
         "_arm_continue_flag", "_arm_marker",
         "_arm_select", "_arm_shuffle", "_arm_negate", "_arm_extinst",
-        "_arm_emit_vertex", "_arm_end_primitive", "_arm_kill",
-        "_arm_call", "_arm_return_value", "_arm_return",
+        "_arm_emit_vertex", "_arm_end_primitive", "_arm_barrier", "_arm_kill",
+        "_arm_call", "_arm_return_value", "_arm_return", "_arm_unreachable",
+        "_arm_atomic",
         "_arm_variable", "_arm_access_chain", "_arm_bitcast",
     )
 
-    def __init__(self, module, entry_name="main"):
+    def __init__(self, module, entry_name="main", shared_before=None):
+        # what the previous pass learned: the SPIR-V ids of static loads
+        # that were loaded again IN THEIR OWN BLOCK (notes/114 §41)
+        self.shared_before = shared_before or frozenset()
         self.module = module
         ep = module.entry_point(entry_name)
         self.model = ep[0]
@@ -157,13 +162,21 @@ class Core(object):
 
         Structured control flow is flattened into markers (cflow.py).
 
-        SUBROUTINES (notes/68).  The driver (0xf0fa7c..0xf0fb14) compiles the
-        entry function, appends a RET to it when the program has other
-        functions, and then compiles each of them (f_7100f103d0 with the
-        function's symbol); the caller reaches one through CAL.  Only the
-        read shape is taken: every other function is called exactly once,
-        from a straight-line entry function, and is itself one block with no
-        call of its own."""
+        SUBROUTINES (notes/68, notes/118).  The driver
+        (0xf0fa7c..0xf0fb14) compiles the entry function, appends a RET to
+        it when the program has other functions, and then compiles each of
+        them (f_7100f103d0 with the function's symbol); the caller reaches
+        one through CAL.
+
+        THE ORDER IS THE MODULE'S FUNCTION LIST, head to tail -- the loop at
+        0x7100f0fb40 is `176 = *(176)` over a singly linked list and looks
+        at no call.  And because every function goes through the ONE entry
+        point, a callee is not restricted to a single block, to no control
+        flow, or to making no call of its own; the entry need not be
+        straight-line either.  `G2S_NOCALLCFLOW=1` restores the older,
+        narrower shape (one call each from a straight-line entry, callees of
+        one block), which was a guess about the order and a restriction the
+        driver does not have."""
         module = self.module
         fns = [f for f in module.functions]
         entry = [f for f in fns if f.result == ep[1]]
@@ -178,6 +191,32 @@ class Core(object):
         insns = _flatten(entry.insns)
         callees = [f for f in fns if f is not entry]
         if callees:
+            # THE ORDER IS THE MODULE'S FUNCTION LIST, head to tail -- READ
+            # off the driver rather than inferred from the calls.  The loop
+            # at 0x7100f0fb40 is `176 = *(176)` over a singly linked list
+            # starting at the module's function head (0x7100f0fb18), and
+            # each node's `+8` is the function it compiles with
+            # `f_7100f103d0` -- the same entry point that compiled the entry
+            # function.  Nothing there looks at the calls, so neither the
+            # call order nor a depth-first walk of the call graph (§50's
+            # patch guessed the latter) is what decides it.  (notes/118 §1)
+            #
+            # No module in the corpus has a call order that DIFFERS from its
+            # declaration order, so this is not a change anything can see --
+            # it is the same answer read instead of guessed.
+            #
+            # And because the driver compiles every function through the one
+            # entry point, a callee is not restricted to one block, to no
+            # control flow, or to making no call of its own.  The old guard
+            # required all three.
+            if not ENV.get("G2S_NOCALLCFLOW"):
+                insns = insns + [_Marker("MAINEND")]
+                for f in callees:
+                    insns = insns + [_Marker("FUNC", f)] + _flatten(f.insns)
+                self.insns = insns
+                self.callees = callees
+                self.callee_by_id = dict((f.result, f) for f in callees)
+                return
             _calls = [i for i in insns if i.opcode == Op.OpFunctionCall]
             _called = [i.args()[0] for i in _calls]
             if (sorted(_called) != sorted(f.result for f in callees)
@@ -252,7 +291,7 @@ class Core(object):
         """Which locals are MATERIALISED, and the locals' own state.
 
         A LOCAL THAT IS LOADED WHOLE IS MATERIALISED, not forwarded.
-        `lo_parts.vert` (`vec4 v; v.x=..; v.y=..; v.z=..; v.w=..;
+        `0052_lo_parts.vert` (`vec4 v; v.x=..; v.y=..; v.z=..; v.w=..;
         gl_Position=v;`) gives the local a register of its own and writes it
         a component at a time, and each component write is a PAIR: the write
         itself, and a self-copy of the OTHER components (`MOV.F R1.yzw, R1;`).
@@ -332,9 +371,9 @@ class Core(object):
         if i_.opcode == Op.OpLoad:
             self.whole_load.add(i_.args()[0])
             # A LOAD THROUGH A CHAIN reads the local too: its stores are
-            # materialised exactly as for a whole load.  `lv_wc.vert` (whole
+            # materialised exactly as for a whole load.  `0072_lv_wc.vert` (whole
             # store, `.y` read) prints `MOV.F R1, R0; MOV.F R0, R0;` and
-            # reads `R1.y`; `lv_cc.vert` (component stores and reads) prints
+            # reads `R1.y`; `0072_lv_cc.vert` (component stores and reads) prints
             # each component store as the pair of notes/55 §7 (notes/72 §5).
             _pc = by_result.get(i_.args()[0])
             if _pc is not None and _pc.opcode in ACCESS_CHAINS:
@@ -342,7 +381,7 @@ class Core(object):
         if i_.opcode == Op.OpStore:
             # which components of a local are ever stored: the pass-through
             # half of a component store copies THOSE, not every component of
-            # the type (`lv_cc.vert`, a vec4 written at `.x` and `.y` only:
+            # the type (`0072_lv_cc.vert`, a vec4 written at `.x` and `.y` only:
             # `MOV.F R2.y, R2;` beside the `.x` store).  A whole store holds
             # them all.
             _pc = by_result.get(i_.args()[0])
@@ -355,9 +394,9 @@ class Core(object):
                 self.lstored.setdefault(i_.args()[0], set()).update(range(4))
             # A STORED LOCAL IS MATERIALISED EVEN WHEN NOTHING LOADS IT.  The
             # store is an assignment statement to the name, whatever reads it
-            # later: `pt_e.vert` (`vec4 c = q * 2.0;`, never read) and
-            # `pt_f.vert` (the same as a private) print `MOV.F R1, R0; MOV.F
-            # R0, R0;`, and `pt_d.vert` a private stored and never read among
+            # later: `0073_pt_e.vert` (`vec4 c = q * 2.0;`, never read) and
+            # `0073_pt_f.vert` (the same as a private) print `MOV.F R1, R0; MOV.F
+            # R0, R0;`, and `0073_pt_d.vert` a private stored and never read among
             # other stores (notes/73 §3).  "Loaded" was never a condition the
             # compiler tests.
             self.whole_load.add(_pc.args()[0] if chained else i_.args()[0])
@@ -403,12 +442,15 @@ class Core(object):
         self.dead_lines = set()         # lines made and then superseded
         self.ldc_canon = {}             # a repeated load -> the first one's id
         self.con_blk = {}               # a same-node construct -> its block
+        self.con_temp = {}              # ... -> the temp its flush writes
         self.ldc_line = {}              # a static block load -> its LDC line
         self.ldc_vreg = {}              # a static LDC's vreg -> block, form
         self.ldc_lines = set()          # the static LDC lines
         self.ldc_dyn = {}               # a dynamic load's vreg -> its block
         self.ldc_at = {}                # a block load -> (its line, its dst)
         self.lane_load_line = {}        # a construct vreg -> its lane-x LDC
+        self.ldc_shared = set()         # load vregs that must not fold
+        self.shared_first = set()       # first loads seen to repeat (pass 1)
         self.carriers = set()           # vregs an address carrier writes
 
     def _init_calls(self):
@@ -422,6 +464,11 @@ class Core(object):
 
     def _fresh(self, is_band=False, is_wide=False):
         self.counter += 1
+        if ENV.get("G2S_FRESHDBG") == str(self.counter):
+            # `G2S_FRESHDBG=<n>`: where placeholder `#n` is created.  The
+            # cheapest way to find which lowering site made a vreg.
+            import sys as _s, traceback as _tb
+            _tb.print_stack(file=_s.stderr)
         if is_band:
             self.band.add(self.counter)
         if is_band or is_wide:
@@ -444,20 +491,20 @@ class Core(object):
         """A LOAD IS SUBSTITUTED INTO THE STATEMENT THAT STORES IT (notes/67
         §1), so a load whose value is a node's -- a matrix part's MOV -- is
         the store's source node, and the node writes the destination: the
-        fold dump of `ld_mx.vert` has the merge take the MOV as lane x
+        fold dump of `0103_ld_mx.vert` has the merge take the MOV as lane x
         (`MOV.F R3.x, R0.y;`), and `mx_g`'s stores (0x3a) take it as their
         source (`MOV.F result.attrib[0], R1;`, `MOV.F R0, R0;`).  Where a
         computed value is stored instead, it is a statement temp of its own
-        and the lane reads that temp by name (`lx_a.frag`: `MUL.F32 R0.x,
+        and the lane reads that temp by name (`0104_lx_a.frag`: `MUL.F32 R0.x,
         ..; .. MOV.F R1.x, R0;`, a 0x3a to the temp and a 0x2b read).
 
-        A STATIC BLOCK LOAD stored whole is the same: `mx_h.vert`'s fold dump
+        A STATIC BLOCK LOAD stored whole is the same: `0104_mx_h.vert`'s fold dump
         has the store (0x3a) on the LDC itself, and `o = m1` prints
         `LDC.F32X4 result.attrib[0], buf0[16];`, `u_xlat0 = m2` `LDC.F32X4
         R0, buf0[32];`.  The load keeps its own write mask: `dest`'s mask
         is replaced by the one the LDC line carries.  The callers that were
         measured ask for it (`ldc=True`): the whole stores (`mx_h`) and lane
-        x (`lx_b.frag`: the merge on the LDC, `LDC.F32 R1.x, buf0[16];`).
+        x (`0104_lx_b.frag`: the merge on the LDC, `LDC.F32 R1.x, buf0[16];`).
 
         The index of the line that now writes `dest`, or None: only the
         store may read the load, and no block may have opened since the
@@ -503,7 +550,7 @@ class Core(object):
         that uses it, so the load's node is made where the READER is.  A
         forward recorded in an earlier block is not what the reader sees --
         it takes the LOCAL.  The converter resolved the load where the
-        `OpLoad` stood, which in `cc_a.frag` is before the second select's
+        `OpLoad` stood, which in `0114_cc_a.frag` is before the second select's
         IF: `tools/gsum.py` puts the two copies in the compiler's block 1
         and the construct's reads in block 4, and the reads' source is the
         local's row (513), not the temp's (514).
@@ -568,7 +615,7 @@ class Core(object):
         The temp's store copies the VALUE's node into the temp's NAME: the
         instruction wrote a lowering vreg that its in-block readers share
         (the value has two uses, so it cannot fold into the name -- `cf_loop`:
-        ADD vreg 11, `s` vreg 2, the flush vreg 5; `sc_select.frag`: TRUNC
+        ADD vreg 11, `s` vreg 2, the flush vreg 5; `0067_sc_select.frag`: TRUNC
         vreg 9, `b0` vreg 3, the flush vreg 2).  The name keeps its number,
         the lowering vreg is new.
 
@@ -663,7 +710,7 @@ class Core(object):
                 self.flushed[_nm] = _lw
                 if (_is_placeholder(_nm) and not ENV.get("G2S_NOFLUSHBAND")):
                     # the NAME is a statement temp's, a band record whatever
-                    # made the value: `sn_b.frag`'s `sin(u_xlat2.xyz)` is a
+                    # made the value: `0109_sn_b.frag`'s `sin(u_xlat2.xyz)` is a
                     # construct (not a band temp), and its flushed name is
                     # vr 7, live out of the block with the SINs' (the seed
                     # `2 3 4 5 6 7 8`, `g2s_trace_liveset`)
@@ -680,7 +727,7 @@ class Core(object):
         (notes/55 §8, notes/65 §4): the reads after it forward from the new
         block's stores only.  The block opens at the STORE: its right side
         was evaluated before the walker's test and stays behind
-        (`lv_v2b.frag`: the DP2 in the block before `u.x = dot(u, u)`, the
+        (`0069_lv_v2b.frag`: the DP2 in the block before `u.x = dot(u, u)`, the
         RSQ and DIV of `u.x = sqrt(u.x)` in the block of the store before
         it), and so do the temps' stores the old block flushes."""
         split = self.stored_key.get(var) == self._bkey()
@@ -691,7 +738,7 @@ class Core(object):
             # AN OUTPUT IS NEVER READ, so its store stays PENDING from any
             # earlier block (notes/72 §8), and a later store to it opens a
             # block at the store whenever the current block holds a node.
-            # `mb_n30.vert`'s `vs_TEXCOORD0.w = dot(u_xlat1, u_xlat0)`, after
+            # `0078_mb_n30.vert`'s `vs_TEXCOORD0.w = dot(u_xlat1, u_xlat0)`, after
             # `vs_TEXCOORD0.xyz` blocks earlier: the DP4 stays in the block
             # before, the store opens the next (the compiler's blocks 18 and
             # 19).  The scheduler's own test would do this too, but it runs
@@ -731,7 +778,7 @@ class Core(object):
         if _base in self.load_of:
             return self.load_of[_base][1], _k
         # ONE COMPONENT OF A SHUFFLE OF THE LOAD is the same component read,
-        # through the shuffle's selector (`cr_b.frag`: `c.xyz = u_xlat0.xyz`
+        # through the shuffle's selector (`0101_cr_b.frag`: `c.xyz = u_xlat0.xyz`
         # -- a whole load, a shuffle, three extracts -- reads `R5.y`, `R5.z`
         # in the blocks its second and third stores open)
         _s = self.module.result_insn.get(_base)
@@ -747,13 +794,13 @@ class Core(object):
     def _con_read(self, vid):
         """A read of ONE component of a construct made in this block, all
         lanes: the DAG takes that component's write, a plain copy, and reads
-        its source instead (`ce_head3.vert`: `u_xlat2 * u_xlat3.yyyy` prints
+        its source instead (`0072_ce_head3.vert`: `u_xlat2 * u_xlat3.yyyy` prints
         `MUL.F32 R9, R18, R5.x;` -- R5.x being what `MOV.F R8.y, R5.x;`
         wrote -- the same forwarding component 0's `head` gets).  None when
         that is not the shape.
 
         Component 0's write copies its source whole (`head`), the others from
-        a `.x` lane; a read of either takes that source (`mc_n3.vert`'s
+        a `.x` lane; a read of either takes that source (`0080_mc_n3.vert`'s
         `-u_xlat1.x` prints `MOV.F R11.x, -R4;`, R4 being what
         `MOV.F R14.x, R4;` wrote)."""
         v = self.values.get(vid)
@@ -780,7 +827,7 @@ class Core(object):
         swizzle over the variable node, and a variable read inside a swizzle
         is not forwarded (the splat's rule, notes/72) -- so the store reads
         the NAME, the value has one use and folds, and there is no
-        self-move: the cut `mq_n2.frag`'s `SV_Target0 = u_xlat0.xyxy` prints
+        self-move: the cut `0087_mq_n2.frag`'s `SV_Target0 = u_xlat0.xyxy` prints
         `MOV.F result_color0, R3.xyxy;` alone."""
         _d = self.module.result_insn.get(val)
         if _d is None or _d.opcode != Op.OpVectorShuffle:
@@ -801,7 +848,7 @@ class Core(object):
     def _reload(self, val):
         """A LOAD IS SUBSTITUTED INTO EVERY STATEMENT THAT READS IT (notes/67
         §1, notes/76), and the DAG is per block: a statement in a later
-        block gets a leaf, and an LDC, of its own.  `pl_e.vert`
+        block gets a leaf, and an LDC, of its own.  `0076_pl_e.vert`
         (`gl_Position = v`, v a uniform vec4) prints an LDC in each element's
         block: `LDC.F32 R0.x`, `LDC.F32X2 R0.y`, `LDC.F32X4 R0.z`,
         `LDC.F32X4 R0.w`.  The masks are `_narrow_loads`'s."""
@@ -824,7 +871,7 @@ class Core(object):
         if not ENV.get("G2S_NORELOADKEY"):
             # the reload IS the location's node in this block: a later read
             # of it here takes the same node (notes/75), another component
-            # too -- `ld_ar.vert`'s `u_xlat1.x = -a.w + m[0].w` after
+            # too -- `0000_ld_ar.vert`'s `u_xlat1.x = -a.w + m[0].w` after
             # `u_xlat0.y = m[0].y` opened the block prints ONE `LDC.F32X4
             # R0.yw, buf0[16];` (`map_2948729f`: node 2.33, made at the
             # store's seq 13, read again at seq 59)
@@ -832,7 +879,7 @@ class Core(object):
                 if _hit[1] == _old:
                     self.ldc_same[_key] = (self._bkey(), _new, _hit[2], _n)
             # ... and the node a one-use reader folds into (`ldc_at`,
-            # `_output_lane_x`, `_component_operand`): `lf_c.frag`'s
+            # `_output_lane_x`, `_component_operand`): `0104_lf_c.frag`'s
             # `u.w = s` opens its block, reloads `s` there, and the lane's
             # scratch MOV folds into the reload (notes/104 §4)
             for _k, _at in list(self.ldc_at.items()):
@@ -844,7 +891,7 @@ class Core(object):
     def _stored_mask(self, var):
         """The write mask of a whole copy of a local: the components it EVER
         stores (`lstored`, notes/72 §5), not its type's.  The cut
-        `mq_n12.frag`'s `SV_Target0 = u_xlat1`, a vec4 stored only at `.x`
+        `0000_mq_n12.frag`'s `SV_Target0 = u_xlat1`, a vec4 stored only at `.x`
         and `.y`, prints `MOV.F result_color0.xy, R0;` and the local's own
         store `MOV.F R15.xy, R0;` (notes/87)."""
         _n = _pointee_components(self.module, var)
@@ -895,7 +942,7 @@ class Core(object):
         read of the MERGE made since the pair, it cannot: the pair's merge
         goes to a vreg of its own, every whole read since takes it, and the
         local's own store copies it back at the block's close
-        (`_merge_forward`'s shape).  `cy_d.frag`'s `u2 = a * 2.0; u2.x = ..;
+        (`_merge_forward`'s shape).  `0109_cy_d.frag`'s `u2 = a * 2.0; u2.x = ..;
         u3 = -c + u2; o = u3 * u2.wwww;` prints `MOV.F R5.yzw, R0; MOV.F
         R5.x, R2;`, the ADD reading R5, the MUL `R0.w`, and `MOV.F R0, R5;`
         last (vr 13 against the local's 3).  In place (the reader goes
@@ -919,8 +966,27 @@ class Core(object):
         # whole store's)
         _bk = self._bkey()
         _wm = _wp[1][1]
+        _reg0 = self.local_reg[var]
         for _c, _f in self.cfw.get(var, {}).items():
             if _f[0] == _bk and self.cfw_kind.get((var, _c)) is not None:
+                if not ENV.get("G2S_NOPAIRWMSTORED"):
+                    # A PASSED-THROUGH LANE IS NOT A WRITTEN ONE.  It keeps
+                    # the entry value, which is what the scheduler's
+                    # `_live_reads` says and what the compiler's reader
+                    # reads (`R4.w`).  Counting it here made a read of the
+                    # ENTRY value look like a read of the merge, so the
+                    # forwarding this function exists to trigger never
+                    # fired.  (notes/129 §6)
+                    _st = False
+                    for _k2 in range(len(self.lines)):
+                        _p2 = _sched.parse(self.lines[_k2])
+                        if (_p2 is not None and _p2[1][0] == _reg0
+                                and _k2 not in self.passthru
+                                and _p2[1][1] & (1 << _c)):
+                            _st = True
+                            break
+                    if not _st:
+                        continue
                 _wm |= 1 << _c
         if any((_wm >> c) & 1 for c in lanes):
             return
@@ -954,6 +1020,28 @@ class Core(object):
             return False
         # the lane read's READERS, and what else they read
         for _u in self._readers_of(vid):
+            # ... AND WHAT THEY OVERWRITE.  The reader cannot go ahead of
+            # the pair when a line that READS THE MERGE must itself come
+            # first -- which is so when the reader STORES INTO a local that
+            # such a line reads: the store would destroy the value that
+            # line takes.  That is the same conclusion the operand test
+            # below reaches, reached through the anti-dependence instead of
+            # through the data.  `map_48ab3d2a-1.frag`: the merge's MUL
+            # reads `#53`, and the reader stores the lane into `#53`.
+            # (notes/129 §5)
+            if (_u.opcode == Op.OpStore and not ENV.get("G2S_NOPAIRWAR")):
+                _dp = _u.args()[0]
+                _dc = self.by_result.get(_dp)
+                if (_dc is not None and _dc.opcode in ACCESS_CHAINS
+                        and _dc.args()):
+                    _dp = _dc.args()[0]     # the component chain's local
+                _dreg = self.local_reg.get(_dp)
+                if _dreg is not None and any(
+                        any(_nm == _dreg for _nm, _sm
+                            in (_sched.parse(self.lines[_k]) or (0, 0, ()))[2])
+                        for _k in _mreads):
+                    self._merge_forward(var)
+                    return
             for _a in _u.args():
                 if _a == vid or not isinstance(_a, int):
                     continue
@@ -999,10 +1087,10 @@ class Core(object):
         which then has two uses -- the local's store and the reader's -- and
         cannot fold into the name.  The pair writes a lowering vreg, and the
         local's own store copies it (queued, flushed with the block's temps).
-        `tools/nodedump.py probes/pb_c.frag.spv`: `MOV.F R0.yzw, R1; MOV.F
+        `tools/nodedump.py probes/0085_pb_c.frag.spv`: `MOV.F R0.yzw, R1; MOV.F
         R0.x, R0;` vr 9, `MOV.F result_color0, R0;`, `MOV.F R1, R0;` vr 2
         (the local), all seq 18.  `o = u * 2.0` (`pb_d`) reads the NAME and
-        the pair writes the local itself.  The cut `mq_n8.frag`'s `u_xlat0 =
+        the pair writes the local itself.  The cut `0091_mq_n8.frag`'s `u_xlat0 =
         hlslcc_movcTemp` after `hlslcc_movcTemp.y = ..` is the same, with a
         local as the reader: `MOV.F R14.xy, R0;` .. `MOV.F R0.xy, R0;`.
 
@@ -1022,7 +1110,7 @@ class Core(object):
                                            lambda _i, _e: _X, count=1)
         if not ENV.get("G2S_NOMERGEEARLY"):
             # A WHOLE READ OF THE LOCAL made since the pair, in its block,
-            # reads the merge too: `mf_c.vert`'s `p.x = dot(b, u_xlat0)`,
+            # reads the merge too: `0103_mf_c.vert`'s `p.x = dot(b, u_xlat0)`,
             # before `o = u_xlat0`, reads the same source as the output store
             # and the local's own store (`tools/gsum.py`: nodes 1.2, 1.3,
             # 1.6), with kind-0 edges from both halves
@@ -1078,7 +1166,7 @@ class Core(object):
             _grp = [_cp[1], _cp[2]]
         else:
             # THE HALVES HAVE TWO SEQS (notes/91), and the merge's readers
-            # take the PASS-THROUGH's: `mf_a.vert` (the pair opened its
+            # take the PASS-THROUGH's: `0103_mf_a.vert` (the pair opened its
             # block, the value does not read the local) -- write seq 7,
             # pass-through 9, and the output store and the local's own store
             # 9 too (`tools/gsum.py`)
@@ -1096,7 +1184,7 @@ class Core(object):
         self.flush_q.append((_reg, _cp[3], _lds, _grp, None, _X))
         if not ENV.get("G2S_NOMERGELFWD"):
             # a LATER read of the local in the block takes the merge too:
-            # `mf_a.vert`'s `dot(b, u_xlat0)` after `o = u_xlat0` reads the
+            # `0103_mf_a.vert`'s `dot(b, u_xlat0)` after `o = u_xlat0` reads the
             # same value as the output store and the local's store
             # (`tools/gsum.py`: all three read one source)
             self.lfwd[var] = (self._bkey(), _X)
@@ -1105,17 +1193,17 @@ class Core(object):
     # -- shared shapes -------------------------------------------------------
 
     def _assemble(self, flat, _mov, force=(), is_band=False,
-                  gather_all=False):
+                  gather_all=False, nogather=()):
         """The composite-construct shape: ONE vreg, one write per component.
 
         `flat` is one `(base, component)` per component, or `(None, text)`
-        for a constant.  Read from `co_mix4.vert` / `co_mul4.vert` (notes/53
+        for a constant.  Read from `0052_co_mix4.vert` / `0053_co_mul4.vert` (notes/53
         sec.6); returned as `(vreg, head)` where `head` is component 0's
         operand, which the consumer reads INSTEAD of the vreg.
 
         `force` are the components gathered through a `.x` scratch even when
         their source component is 0: a component of a local's NAME
-        (`lv_cc.vert`: `t.x` into `.y` is `MOV.F R1.x, R2; MOV.F R1.y,
+        (`0072_lv_cc.vert`: `t.x` into `.y` is `MOV.F R1.x, R2; MOV.F R1.y,
         R1.x;`), as a vector attribute's `.y` is (`co_mix4`), where a scalar
         value goes straight in (`co_mul4`'s MULs).
 
@@ -1123,11 +1211,17 @@ class Core(object):
         of the band temps every SPIR-V value instruction contributes
         (notes/52) -- it matters once the value is stored and its temp's
         store is flushed: the flushed name then lives out of the block like
-        every other one (`ce_head.vert`).
+        every other one (`0072_ce_head.vert`).
 
         `gather_all`: EVERY component past the first goes through a `.x`
         scratch, a constant too -- the coordinate a shadow sample rebuilds
-        (`sa_b.frag`: `MOV.F R2.x, {2, 0, 0, 0};` .. `MOV.F R5.z, R2.x;`).
+        (`0099_sa_b.frag`: `MOV.F R2.x, {2, 0, 0, 0};` .. `MOV.F R5.z, R2.x;`).
+
+        `nogather`: components `gather_all` does NOT apply to.  A shadow
+        sample AT AN EXPLICIT LOD gathers its coordinate lanes and writes
+        the LOD straight into `.w` (notes/114 \u00a763; `0114_sd_a.frag`:
+        `MOV.F R0.w, {0, 0, 0, 0}.x;` beside the gathered `.z`), because the
+        lod follows the explicit-lod rule and not the coordinate's.
 
         The entries are kept (`con_flat`), so a later reader that rebuilds the
         vector from its components can take the construct's own sources.
@@ -1140,7 +1234,7 @@ class Core(object):
             _dst = self._fresh(is_band=is_band, is_wide=True)
         else:
             # the construct is the band temp, and the load shares it: in
-            # `pu_f.vert` the construct is vreg 2, ahead of the MUL's 3, and
+            # `0104_pu_f.vert` the construct is vreg 2, ahead of the MUL's 3, and
             # the load prints in its register (`LDC.F32 R0.x`)
             _n = int(_dst[1:])
             if is_band:
@@ -1185,21 +1279,21 @@ class Core(object):
                     or (_c == 0 and _lane0_is_load)):
                 continue
             _b, _sc = _ent
-            if _b is None and gather_all and _c != 0:
+            if _b is None and gather_all and _c != 0 and _c not in nogather:
                 _o = self._fresh(is_wide=True)
                 _gathers.append(len(lines))
                 lines.append(_emit(_mov, "%s.x" % _o, _sc))
                 _text = "%s.x" % _o
             elif _b is None:
                 # A CONSTANT INTO LANE X PRINTS BARE (notes/90 §5), in a
-                # construct too: `wk_c.frag`'s `a / vec4(2.0, b.z, a.w,
+                # construct too: `0110_wk_c.frag`'s `a / vec4(2.0, b.z, a.w,
                 # b.y)` prints `MOV.F R0.x, {2, 0, 0, 0};`.  No lane-x MOV
                 # of a constant in the probes, the corpus or the slice
                 # listings (22,295 lines) has the `.x`.
                 _text = _sc if _c == 0 else "%s.x" % _sc
             elif _c == 0 and not ENV.get("G2S_LANE0GATHER"):
                 # LANE X IS WRITTEN STRAIGHT from its source, a component
-                # select too: `pu_h.vert`'s fold dump has the swizzle's MOV
+                # select too: `0104_pu_h.vert`'s fold dump has the swizzle's MOV
                 # (`v.y`) as the merge's lane x -- `MOV.F R0.x, R1.y;`, no
                 # gather first (notes/104 §8)
                 _text = _swizzle(_b, _sc)
@@ -1217,10 +1311,10 @@ class Core(object):
                 _head = _text
             _csrc[_c] = _text
         # A PLAIN NODE IN LANE X is written with the other lanes, one seq:
-        # `cz_a.frag`'s `vec4(n1, n2, n3, n4)` of four MULs and `cz_b`'s
+        # `0109_cz_a.frag`'s `vec4(n1, n2, n3, n4)` of four MULs and `cz_b`'s
         # `vec4(n1, a.y, a.z, a.w)` are all one seq (10; 4), where `cz_c`'s
         # `vec4(a.x, n2, ..)` -- lane x a component select -- is 9 against 8
-        # (`tools/nodedump.py`); `sb_c.vert`'s bitcast construct 44 x4
+        # (`tools/nodedump.py`); `0109_sb_c.vert`'s bitcast construct 44 x4
         _node0 = (flat and flat[0] is not None and flat[0][0] is not None
                   and _is_placeholder(flat[0][0]) and flat[0][1] == 0
                   and flat[0][0] not in self.local_reg.values()
@@ -1255,9 +1349,9 @@ class Core(object):
         """The construct's register when lane x's operand is a static
         scalar BLOCK LOAD of this block, or None.  A load is substituted into
         its reader (notes/67 §1), so the merge takes the load itself as lane
-        x -- `pu_f.vert`'s fold dump: the first 0x57 on the 0x3b, and the
+        x -- `0104_pu_f.vert`'s fold dump: the first 0x57 on the 0x3b, and the
         later insert of the same `s` reads it: `LDC.F32 R0.x, buf0[16]; ..
-        MOV.F R0.z, R0.x;` -- as a local's lane x does (`lx_b.frag`).  A
+        MOV.F R0.z, R0.x;` -- as a local's lane x does (`0104_lx_b.frag`).  A
         computed value is a temp and gets its lane MOV (`mx_d`'s `MOV.F R2.x,
         R1;`).  `G2S_NOLOADLANE=1` off."""
         if (ENV.get("G2S_NOLOADLANE") or run or gather_all or not flat
@@ -1268,6 +1362,8 @@ class Core(object):
         _r = self.ldc_vreg.get(_b0)
         if _r is None or _r[0] != self._bkey() or _r[2] not in ("", ".x"):
             return None
+        if _b0 in self.ldc_shared:
+            return None                 # read twice HERE: it keeps its own
         if _b0 in self.ldc_dyn:
             return None
         return _b0
@@ -1292,9 +1388,9 @@ class Core(object):
     def _construct_seqs(self, s0, writes, gathers, flat, run=False):
         """Returns the statement's own group (`_rest`)."""
         """A CONSTRUCT'S `node[36]`s (`tools/nodedump.py` on `sa_a`..`sa_d`
-        and `sa_b.frag`'s `txVec0 = vec4(u_xlat0.xy, 2.0, u_xlat0.z)`): the
+        and `0099_sa_b.frag`'s `txVec0 = vec4(u_xlat0.xy, 2.0, u_xlat0.z)`): the
         writes of components 1.. are made first, together; then the write of
-        component 0; then the gathers, in component order -- `sa_a.frag`'s
+        component 0; then the gathers, in component order -- `0099_sa_a.frag`'s
         rebuilt coordinate seq 1 (w, z, y), 3 (x), 4, 5, 6 (the `.y`, `.z`,
         `.w` gathers); `txVec0` 4, 5, 6, 8.  The lines are still emitted
         source first; the order is the scheduler's.  (Before notes/99 every
@@ -1302,7 +1398,7 @@ class Core(object):
         a gather was at its own line; `G2S_CONSTRUCTTIE=1` restores that.)
 
         `run`: component 0 is a LEADING RUN (`_leading_run`), whose two MOVs
-        carry the writes' own seq -- `pu_j.vert`'s fold dump: the run's `.x`
+        carry the writes' own seq -- `0104_pu_j.vert`'s fold dump: the run's `.x`
         and `.xy` MOVs, the insert and the constant lane all seq 4 -- so
         nothing is singled out as the component-0 write."""
         _w0 = (writes[0] if flat and flat[0] is not None and not run
@@ -1374,14 +1470,23 @@ class Core(object):
                 "its re-lowering there (index and address) is not measured "
                 "[%s %%%s]" % (OP_NAME.get(op, op),
                                getattr(ins, "result", "-")))
-        if self.con_blk and any(
-                self.con_blk.get(_a, self._bkey()) != self._bkey()
-                for _a in ins.args()):
-            # a same-node construct's value is forwarded as the node's
-            # swizzle; a read in a later block takes the temp's NAME, which
-            # is not modelled (notes/75)
-            raise NotEstablished(
-                "a construct of one repeated load read in a later block")
+        if self.con_blk:
+            # A SAME-NODE CONSTRUCT'S VALUE is forwarded as the node's
+            # swizzle IN ITS OWN BLOCK; a read in a LATER block takes the
+            # temp's NAME (notes/75) -- the register the construct's flush
+            # writes, with no swizzle.  That was read and simply not
+            # modelled; `con_temp` carries it.  (notes/125 §1)
+            for _a in ins.args():
+                if (self.con_blk.get(_a, self._bkey()) == self._bkey()
+                        or _a not in self.con_temp
+                        or ENV.get("G2S_NOCONLATER")):
+                    if self.con_blk.get(_a, self._bkey()) != self._bkey():
+                        raise NotEstablished(
+                            "a construct of one repeated load read in a "
+                            "later block")
+                    continue
+                self.values[_a] = self.con_temp[_a]
+                self.comps.pop(_a, None)
         if self.node_next:
             self.blk_node = True
             self.node_next = False
@@ -1410,7 +1515,7 @@ class Core(object):
     def _node_after_reader(self, ins):
         """A MATRIX PART'S MOV IS MADE AFTER THE NODE THAT READS IT: the load
         is lowered as that node's operand (notes/67 §1).  `tools/nodedump.py`
-        on `mx_d.vert`: the MUL is seq 1 and the MOV it reads 5, the ADD 7
+        on `0104_mx_d.vert`: the MUL is seq 1 and the MOV it reads 5, the ADD 7
         and its MOV 10, the construct's writes 11 and `m[1].x`'s MOV 14.  So
         the MOV's `node[36]` follows the reader's first line, the parts in
         operand order.  `G2S_NONODESEQ=1` leaves the MOV at its own line."""

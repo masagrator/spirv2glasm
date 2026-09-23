@@ -7,6 +7,7 @@ Each is a block boundary: the scheduler runs ONE BASIC BLOCK AT A TIME
 (notes/31), so a computation in a later block is never hoisted above a store
 in an earlier one.
 """
+import re as _re
 from spvnames import Op, ExecutionModel
 
 import sched as _sched
@@ -20,6 +21,22 @@ from glasmlib.boolean import _BOOL_SUFFIX, _BOOL_REPR_CODE, _CFLAG_TYPE, \
     _CFLAG_REG, _bool_constant, _bool_normalise, _cc_move, _switch_test, \
     _loop_head_test
 from glasmlib.cflow import MARKER
+
+# SPIR-V `Scope` and `MemorySemantics` values the barrier arm needs.  The
+# memory-class mask is the five class bits; the ordering bits (acquire,
+# release, sequentially-consistent) do not change the spelling in any
+# listing measured (notes/119 §1).
+_SCOPE_WORKGROUP = 2
+_SCOPE_INVOCATION = 4
+_SEM_UNIFORM_MEMORY = 0x40
+_SEM_SUBGROUP_MEMORY = 0x80
+_SEM_WORKGROUP_MEMORY = 0x100
+_SEM_CROSS_WORKGROUP_MEMORY = 0x200
+_SEM_ATOMIC_COUNTER_MEMORY = 0x400
+_SEM_IMAGE_MEMORY = 0x800
+_MEM_SEMANTICS = (_SEM_UNIFORM_MEMORY | _SEM_SUBGROUP_MEMORY
+                  | _SEM_WORKGROUP_MEMORY | _SEM_CROSS_WORKGROUP_MEMORY
+                  | _SEM_ATOMIC_COUNTER_MEMORY | _SEM_IMAGE_MEMORY)
 from glasmlib.lower.core import _local_chain, _is_placeholder
 from glasmlib import nodes
 
@@ -52,7 +69,7 @@ class ControlOps(object):
         materialised local, so the walker's name-record rule applies
         (notes/65 §4): the store opens a block when the flag's store is
         pending from an earlier block and this one already holds a node --
-        `lp_wcont.vert`'s node dump has the arm's `flag = 1.0` (seq 31) in a
+        `0071_lp_wcont.vert`'s node dump has the arm's `flag = 1.0` (seq 31) in a
         block of its own after the ADD and the stores of `i` (seq 28)."""
         if ins.opcode != MARKER or ins.kind not in _CFLAG_KINDS:
             return False
@@ -100,7 +117,7 @@ class ControlOps(object):
             ins, _bk_pre)
         # ... and only NOW: the condition's `.CC` move is in the block
         # BEFORE the structure word (`_bk_pre`), and it reads what that
-        # block forwards (`la_a.frag`: `MOV.U.CC RC.x, R1;`).
+        # block forwards (`0105_la_a.frag`: `MOV.U.CC RC.x, R1;`).
         self._expire_local_forwards()
         return True
 
@@ -128,7 +145,7 @@ class ControlOps(object):
                 raise NotEstablished("a parameter no call passed")
             _pm, _pd = _parameter_mov(self.module, _p)
             # its own position, before the body's first statement
-            # (`cf_call4.vert`: seq 20 and 21 for the two, 22 for the
+            # (`0068_cf_call4.vert`: seq 20 and 21 for the two, 22 for the
             # multiply)
             _g = _sched.Tie()
             _g.seq = len(self.lines) - 0.5 + 0.01 * _pk
@@ -155,7 +172,7 @@ class ControlOps(object):
             # is a comparison, `facing > 0` on the int input, and its bool
             # move (an integer operand's `MOV.S t, -c`, `_bool_normalise`) has
             # the IF as its one use, so the IF's `.CC` folds into it with the
-            # `HC` destination (`_switch_test`'s rule).  `ff_a.frag`: `MOV.S
+            # `HC` destination (`_switch_test`'s rule).  `0088_ff_a.frag`: `MOV.S
             # R0.x, fragment.facing; SGT.S R1.x, R0, {0, 0, 0, 0}; MOV.S.CC
             # HC.x, -R1; IF NE.x;`.
             self._facing_cc()
@@ -170,7 +187,7 @@ class ControlOps(object):
     def _is_bool_local(self, cond):
         """A STORED BOOL (`bool b = i >= n; if (b)`): the compare was
         normalised where it was made (the store's value), and the IF reads
-        the variable (`g2s_trace_wstmt` on lp_wbrk.vert: the if's condition
+        the variable (`g2s_trace_wstmt` on 0071_lp_wbrk.vert: the if's condition
         is the variable node, cls 12), so no move of its own."""
         _cd = self.module.result_insn.get(cond)
         return (cond in self.load_of and _cd is not None
@@ -194,13 +211,13 @@ class ControlOps(object):
         `(u_xlatb6.x) ? .. : ..`, notes/85): the component select of the
         name is an instruction with one use and no modifier, so the IF's
         `.CC` folds into it and the value, used nowhere else, goes to `HC`
-        (node[40] = 1, as `_switch_test`'s move).  `pb_a.frag` prints
+        (node[40] = 1, as `_switch_test`'s move).  `0085_pb_a.frag` prints
         `MOV.U.CC HC.x, R3;` -- the NAME's register, R3, not the TRUNC stored
         into it in the same block.
 
         ... unless the component was stored in THIS block: the read then
         takes the stored value, as every component read does (notes/69) --
-        the cut `mq_n18.frag`'s `u_xlatb4.x = 0.0 < t.x; if (u_xlatb4.x)`
+        the cut `0000_mq_n18.frag`'s `u_xlatb4.x = 0.0 < t.x; if (u_xlatb4.x)`
         prints `MOV.U.CC HC.x, R3;`, R3 the TRUNC."""
         _read = self._bool_component_read(ins.cond, _bk_pre)
         if _read is None:
@@ -215,12 +232,12 @@ class ControlOps(object):
         COMPONENT OF A STORED BOOL VECTOR, stored in block `bkey`:
 
         * a plain store into lane x: the stored value itself -- a second use
-          of it (`sel_b.frag`, `sel_p.frag`);
+          of it (`0095_sel_b.frag`, `0101_sel_p.frag`);
         * a merge pair: the value stored, through a component select of its
-          own (notes/69, `sel_j.frag`);
+          own (notes/69, `0101_sel_j.frag`);
         * a plain store into ANOTHER lane is an insert, and the read selects
-          from the name's register (`sel_n.frag`: `MOV.U.CC HC.x, R0.z;`,
-          `sel_m.frag`);
+          from the name's register (`0101_sel_n.frag`: `MOV.U.CC HC.x, R0.z;`,
+          `0101_sel_m.frag`);
         * no store in `bkey`: the name's register at that component.
 
         None when `cond` is not such a read."""
@@ -294,7 +311,7 @@ class ControlOps(object):
         0xfd10ac) of the three operands, and the IR the statement walker
         receives is a STATEMENT: `if (c) t = a; else t = b;` into the
         result's named temp, then the consumer reads `t` (g2s_trace_irtree on
-        `sc_select.frag`).  So:
+        `0067_sc_select.frag`).  So:
           * the condition is read where the select stands -- in this block,
             so a local stored here gives its stored value;
           * each arm reads its operand at the arm's entry: a local's NAME,
@@ -319,7 +336,7 @@ class ControlOps(object):
         # move FOLDS into a component select of its own -- `HC`, as the
         # branch's -- except when the read is the stored temp itself, stored
         # by a PLAIN write: that temp has two uses and the move stays, into
-        # `RC` (`sel_a.frag`, `sel_b.frag`: `MOV.U.CC RC.x, R1;`; `sel_j.frag`,
+        # `RC` (`0095_sel_a.frag`, `0095_sel_b.frag`: `MOV.U.CC RC.x, R1;`; `0101_sel_j.frag`,
         # a merge pair: `MOV.U.CC HC.x, R2;`, and after the IF, the name:
         # `MOV.U.CC HC.x, R4.y;`).
         _bcomp = (self._bool_component_read(cond, self._bkey())
@@ -336,7 +353,7 @@ class ControlOps(object):
         _mv, _ds, _forms = self._select_arms(ins, ta, fa)
         if not ENV.get("G2S_NOSELECTTOUCH"):
             # ... and a read in a LATER block touches the local (notes/65
-            # §4): its pending store no longer opens a block.  `dt_v.frag`'s
+            # §4): its pending store no longer opens a block.  `0108_dt_v.frag`'s
             # `u_xlat5.x = b ? u_xlat21 : 0.0` reads `u_xlat21` in the THEN
             # arm, and the next `u_xlat21 = dot(..)` is stored in its block --
             # `MOV.F R0.x, R3; MIN.F ..; MOV.F R3.x, R3;`, store and flush
@@ -352,7 +369,7 @@ class ControlOps(object):
         self.stores = 0
         self.blk_no += 1
         if _facing:
-            # the select's IF on gl_FrontFacing (`ff_a.frag`'s
+            # the select's IF on gl_FrontFacing (`0088_ff_a.frag`'s
             # `gl_FrontFacing ? 0xffffffffu : 0u`): the compare and its folded
             # `.CC` move, as the branch's (`_facing_cc`)
             self._facing_cc()
@@ -377,6 +394,74 @@ class ControlOps(object):
         self.arm_names.add(ins.result)
         return True
 
+    def _bool_lane_view(self, cond):
+        """A SHUFFLE OF A STORED BOOL VECTOR's lanes.
+
+        `_normalised_view` follows a shuffle to a load of a bool local, but
+        only when the block stored a COMPARISON into it.  A local the source
+        filled lane by lane -- `u_xlatb0.xw = lessThan(..).xw` and then
+        `uvec2(u_xlatb0.xw)` -- is the same shape for this arm's purpose:
+        the `.CC` move copies the lanes read and the test swizzles, which is
+        what the third branch below already builds and what `sv_a`, `sv_b`
+        and `sv_c` pin.  `G2S_NOBOOLLANEVIEW=1` refuses it again."""
+        if ENV.get("G2S_NOBOOLLANEVIEW"):
+            return False
+        d = self.module.result_insn.get(cond)
+        if d is None:
+            return False
+        if d.opcode == Op.OpVectorShuffle and d.args()[0] == d.args()[1]:
+            _b = d.args()[0]
+        elif (d.opcode == Op.OpLoad
+              and not ENV.get("G2S_NOBOOLLOADVIEW")):
+            # THE WHOLE LOAD, with no shuffle over it, is the same shape:
+            # `post_outline.frag` selects on a `bvec2` local and prints the
+            # `.CC` lane by lane -- `MOV.U.CC RC.x, R7; MOV.U.CC RC.y, R7;`
+            # -- exactly as the shuffled form does, against the single
+            # masked `MOV.U.CC RC.xy, R0;` a live comparison gets.
+            # (notes/121 §1)
+            _b = cond
+        else:
+            return False
+        _bd = self.module.result_insn.get(_b)
+        if (_b not in self.load_of or _bd is None
+                or not _bd.has_result_type):
+            return False
+        # a VECTOR of bool: `_is_bool_local`'s test is for the scalar
+        _t = self.module.types.get(_bd.result_type)
+        if _t is not None and _t.opcode == Op.OpTypeVector:
+            return self._is_bool_type(_t.operands[1])
+        return self._is_bool_type(_bd.result_type)
+
+    def _merge_lane_order(self, base, mask):
+        """The lanes of a local's merge IN THE ORDER THE COMPILER LISTS THEM.
+
+        A component store's 0x57 merge node has two slots, the STORE half
+        first and the pass-through copy second (`0114_m1.frag`, `0114_sv_h.frag`: the
+        block-1 merge of a `bvec4` stored `.x` then `.z` is `[.z, .x]`), and
+        the per-lane condition-code moves of a vector select are created in
+        that order -- each reads the half for its own lane.  Creation order
+        is what pass 1 releases in, so the lanes are built stored-first even
+        though the listing prints them in component order.
+        `G2S_NOLANEMERGEORDER=1` keeps plain component order."""
+        if ENV.get("G2S_NOLANEMERGEORDER") or len(mask) < 2:
+            return mask
+        _carried = None
+        for k in reversed(self.passthru):
+            if not 0 <= k < len(self.lines):
+                continue
+            _m = _re.match(r"\s*\S+\s+(\S+?)(?:\.([xyzw]+))?\s*,",
+                           self.lines[k])
+            if _m is None or _m.group(1) != base:
+                continue
+            _carried = _m.group(2) or "xyzw"
+            break
+        if _carried is None:
+            return mask
+        _stored = [c for c in mask if c not in _carried]
+        if not _stored:
+            return mask
+        return "".join(_stored + [c for c in mask if c in _carried])
+
     def _normalised_view(self, cond):
         """Is the bool a normalised comparison, or components of one (a
         shuffle or extract of it)?"""
@@ -392,7 +477,7 @@ class ControlOps(object):
             elif (d.opcode == Op.OpLoad and cond not in self.comps
                     and not ENV.get("G2S_NOBOOLLOADVIEW")):
                 # A LOAD OF A BOOL LOCAL the block stored a comparison into
-                # is that comparison, forwarded: `cc_c.frag`'s `mix(.., ..,
+                # is that comparison, forwarded: `0106_cc_c.frag`'s `mix(.., ..,
                 # u_xlatb1.xy)` right after `u_xlatb1.xy = lessThan(..)`
                 # sets the condition code from the TRUNC's register --
                 # `MOV.U.CC1 RC.xy, R7;` beside the local's own store
@@ -407,7 +492,7 @@ class ControlOps(object):
                     # ... and a load that reads the LOCAL'S REGISTER, stored
                     # whole from a swizzle of a comparison (a selected value
                     # is materialised by the store): the register holds the
-                    # normalised bools -- `bs_a.frag`'s `u_xlatb1.xyz =
+                    # normalised bools -- `0109_bs_a.frag`'s `u_xlatb1.xyz =
                     # greaterThanEqual(..).xyz; mix(.., u_xlatb1.xyz)` sets
                     # `MOV.U.CC RC.xyz, R4;`, R4 the local
                     return True
@@ -421,12 +506,12 @@ class ControlOps(object):
     def _bool_splat(self, cond):
         """(the operand, its component) when the condition is a SPLAT of one
         bool -- `OpCompositeConstruct b b ..` -- else None.  A normalised
-        comparison is read where it is (`sel_f.frag`: `MOV.U.CC RC.x, R0;`).
+        comparison is read where it is (`0100_sel_f.frag`: `MOV.U.CC RC.x, R0;`).
 
         A splat of a STORED BOOL'S COMPONENT (HLSLcc's `bvec2(u_xlatb0.y)`)
-        is refused: `sel_e.frag` sets `RC.y` from the local's register, as a
+        is refused: `0100_sel_e.frag` sets `RC.y` from the local's register, as a
         splat reads the name (notes/72), but its listing also has no store of
-        the compare's temp, where `sel_b.frag`'s scalar select does -- and
+        the compare's temp, where `0095_sel_b.frag`'s scalar select does -- and
         when the compiler drops that store has not been read (notes/100)."""
         module = self.module
         d = module.result_insn.get(cond)
@@ -443,7 +528,7 @@ class ControlOps(object):
                     raise NotEstablished(
                         "a vector select on a splat of a stored bool's "
                         "component (refused on request)")
-                # THE LOCAL'S LANE: `sel_e.frag`'s fold dump has the `.CC`
+                # THE LOCAL'S LANE: `0100_sel_e.frag`'s fold dump has the `.CC`
                 # (0x7e, mask .y) on the insert that wrote `u_xlatb0.y` and
                 # the select predicated on `.y` -- `MOV.U.CC RC.y, R0;` ..
                 # `(NE.y)`.  The compare has no store of its own because the
@@ -453,7 +538,7 @@ class ControlOps(object):
                 # plain store into lane X is not an insert but the value's
                 # own node, and the `.CC` reads what the lane FORWARDS --
                 # the same test `_bool_component_read` makes for an IF's
-                # condition.  `sv_f.frag`: the compiler's `.CC` (node 0.3)
+                # condition.  `0114_sv_f.frag`: the compiler's `.CC` (node 0.3)
                 # has the TRUNC (0.1) as its source, with the local's store
                 # (0.15) reading it too.  `G2S_NOSPLATFWD=1` reads the
                 # local's lane whatever the kind.
@@ -467,9 +552,9 @@ class ControlOps(object):
             if (bd.args()[0] in self.local_reg and b in self.values
                     and not ENV.get("G2S_NOBOOLSPLAT")):
                 # a WHOLE bool local reads as any whole load does: the value
-                # stored in this block (`sel_h.frag`: `MOV.U.CC RC.x, R1;`,
+                # stored in this block (`0100_sel_h.frag`: `MOV.U.CC RC.x, R1;`,
                 # R1 the TRUNC, and the temp's store `MOV.U R1.x, R1;`
-                # stays), else the name (`sel_i.frag`, stored before an IF:
+                # stays), else the name (`0100_sel_i.frag`, stored before an IF:
                 # `MOV.U.CC RC.x, R0;`)
                 return self.values[b], self.comps.get(b, (0, 1, 2, 3))[0]
             return None
@@ -497,12 +582,12 @@ class ControlOps(object):
         """A VECTOR select is not a branch: the front end writes the result
         from the false operand, sets the condition code from the bool vector
         at the result's mask, and overwrites the components whose condition
-        holds with a predicated MOV (`sel_c.frag`, `mix(uvec2(3u),
+        holds with a predicated MOV (`0095_sel_c.frag`, `mix(uvec2(3u),
         uvec2(5u), lessThan(..).xy)`):
             MOV.U R2.xy, {3, 3, 0, 0};
             MOV.U.CC RC.xy, R0;
             MOV.U R2.xy(NE), {5, 5, 0, 0};
-        and `sel_d.frag` the same with inputs for the two operands.  The
+        and `0095_sel_d.frag` the same with inputs for the two operands.  The
         condition is the compare's normalised value read through its
         selector (`R0` for `.xy` of a four-component compare)."""
         _splat = self._bool_splat(cond)
@@ -510,7 +595,15 @@ class ControlOps(object):
                   if _splat is None and not self._normalised_view(cond)
                   else None)
         if _splat is None and _lanes is None \
-                and not self._normalised_view(cond):
+                and not self._normalised_view(cond) \
+                and not self._bool_lane_view(cond):
+            if ENV.get("G2S_SELDBG"):
+                import sys as _s
+                _d = self.module.result_insn.get(cond)
+                print("SELDBG cond=%r val=%r comps=%r op=%r args=%r" % (
+                    cond, self.values.get(cond), self.comps.get(cond),
+                    getattr(_d, "opcode", None),
+                    _d.args() if _d is not None else None), file=_s.stderr)
             raise NotEstablished(
                 "a vector select on a bool vector that is not a normalised "
                 "comparison")
@@ -520,7 +613,7 @@ class ControlOps(object):
         if _splat is not None:
             # ONE BOOL FOR EVERY LANE (`bvec2(b)`): the condition code is
             # set in the one component the bool lives in, and the predicate
-            # tests that component (`sel_f.frag`: `MOV.U.CC RC.x, R0;` ..
+            # tests that component (`0100_sel_f.frag`: `MOV.U.CC RC.x, R0;` ..
             # `MOV.F R2.xy(NE.x), ..;`).
             _src, _k = _splat
             _cc = "MOV.%s.CC RC.%s, %s;" % (_BOOL_SUFFIX, _COMPONENTS[_k],
@@ -528,7 +621,7 @@ class ControlOps(object):
             _pred = "(NE.%s)" % _COMPONENTS[_k]
         elif _lanes is not None:
             # A CONSTRUCTED BOOL VECTOR sets the condition code LANE BY LANE:
-            # `sel_g.frag`'s fold dump has the select's (0xa8) condition a
+            # `0100_sel_g.frag`'s fold dump has the select's (0xa8) condition a
             # merge chain of four `.CC` MOVs (0x7e), each on its own lane's
             # write of the construct -- `MOV.U.CC RC.w, R1; .. RC.z ..` --
             # and the predicate the whole mask (notes/104 §9).  The four are
@@ -546,6 +639,24 @@ class ControlOps(object):
                     "a vector select whose condition has no form")
             _cc = _cc_move(_c, _ds)
             _pred = "(NE)"
+            # A LOCAL FILLED LANE BY LANE sets the condition code ONE LANE
+            # AT A TIME EVEN WITH NO SWIZZLE ON THE SOURCE.  The swizzled
+            # case below already read this; `0089_sv_bl.frag` is the same
+            # shape at the identity lanes and the oracle still prints
+            #     MOV.U.CC RC.x, R1;
+            #     MOV.U.CC RC.y, R1;
+            # against the single `MOV.U.CC RC.xy, R1;` a LIVE comparison
+            # gets (`0095_sel_c.frag`).  So the split is the condition's
+            # PROVENANCE -- a name read against a comparison value -- not
+            # whether its text carries a selector.  (notes/121 §2)
+            if ("." not in _c and not self._normalised_view(cond)
+                    and self._bool_lane_view(cond)
+                    and not ENV.get("G2S_NOBAREBOOLLANE")):
+                _cc = "\n".join(
+                    "MOV.%s.CC RC%s.%s, %s;"
+                    % (_BOOL_SUFFIX, "$+" if _j else "", _c2, _c)
+                    for _j, _c2 in enumerate(
+                        self._merge_lane_order(_c, "xyzw"[:_nc])))
             _base, _dot, _sw = _c.rpartition(".")
             if (_dot and _sw and len(_sw) >= _nc and set(_sw) <= set("xyzw")
                     and not ENV.get("G2S_CCSWIZZLESRC")):
@@ -553,14 +664,32 @@ class ControlOps(object):
                 if _lt != "xyzw"[:_nc]:
                     # A SELECTION OF THE BOOL VECTOR'S LANES: the `.CC` move
                     # copies the lanes read, in place, and the test swizzles
-                    # -- `sv_a.frag`'s `mix(.., .., b.xzw)` prints `MOV.U.CC
+                    # -- `0114_sv_a.frag`'s `mix(.., .., b.xzw)` prints `MOV.U.CC
                     # RC.xzw, R0;` and `(NE.xzww)`, `sv_b` (`b.wy`) `RC.yw`
                     # and `(NE.wyzw)`, `sv_c` (`b.zzx`) `RC.xz` and
                     # `(NE.zzxw)`: the unused lanes pad with their own
                     # component (the slice's `map_daf6b9f2` and three more)
                     _mask = "".join(c for c in "xyzw" if c in _lt)
-                    _cc = "MOV.%s.CC RC.%s, %s;" % (_BOOL_SUFFIX, _mask,
-                                                     _base)
+                    if (not self._normalised_view(cond)
+                            and self._bool_lane_view(cond)):
+                        # A LOCAL FILLED LANE BY LANE -- one this block did
+                        # NOT store a comparison into whole, which is what
+                        # `_normalised_view` tests -- sets the condition
+                        # code ONE LANE AT A TIME, as `_lanes` does for a
+                        # constructed bool vector: `chr_cloth_11e33b37`'s
+                        # `uvec2(u_xlatb0.xz)` is `MOV.U.CC RC.x, R10;` and
+                        # `MOV.U.CC RC.z, R10;`, not one `RC.xz`.  A bool
+                        # vector that is ONE value keeps the combined move
+                        # (`sv_a`, and the corpus's `MOV.U.CC RC.xzw, R4;`
+                        # beside `(NE.xzww)`).
+                        _cc = "\n".join(
+                            "MOV.%s.CC RC%s.%s, %s;"
+                            % (_BOOL_SUFFIX, "$+" if _j else "", _c2, _base)
+                            for _j, _c2 in enumerate(
+                                self._merge_lane_order(_base, _mask)))
+                    else:
+                        _cc = "MOV.%s.CC RC.%s, %s;" % (_BOOL_SUFFIX, _mask,
+                                                        _base)
                     _pred = "(NE.%s)" % (_lt + "xyzw"[_nc:])
         _t = self._fresh(True)
         self.lines.append(_emit(_mv, _t + _ds, _forms[1]))
@@ -579,7 +708,7 @@ class ControlOps(object):
         predicates the LG2s' construct itself, where we wrote the local's
         name first and predicated that.  The BRANCH form's arms are blocks of
         their own and read the NAME at the block's entry (notes/81), which is
-        what `dt_v.frag` prints (`MOV.F R0.x, R0;` in its THEN arm).
+        what `0108_dt_v.frag` prints (`MOV.F R0.x, R0;` in its THEN arm).
         `G2S_SELARMNAME=1` reads the name in both."""
         module = self.module
         _nc = _components(module, ins.result_type)
@@ -639,13 +768,95 @@ class ControlOps(object):
         self.stores = 0
         return True
 
+    # -- barriers -------------------------------------------------------------
+
+    def _arm_barrier(self, ins):
+        """`OpMemoryBarrier` and `OpControlBarrier`, READ off the four compute
+        listings in the corpus that carry a barrier at all (notes/119 §1).
+
+        `post_tonemap_histogram.comp` has, in SPIR-V order, MemoryBarrier
+        (1, 264), ControlBarrier (2, 2, 264), and the same pair again; its
+        listing has `MEMBAR.CTA;` `BAR ;` `MEMBAR.CTA;` .. `MEMBAR.CTA;`
+        `BAR ;` `MEMBAR.CTA;` -- four `MEMBAR.CTA` against two `BAR`, so the
+        CONTROL barrier prints a `BAR ;` AND a `MEMBAR.CTA;` after it, and
+        the MEMORY barrier prints the one line.  `post_tonemap_update.comp`
+        is the same at 16 against 8.
+
+        `particle_fog_sort.comp` separates the two `MEMBAR` spellings: its
+        MemoryBarrier carries semantics 3400 (image, atomic-counter,
+        workgroup and uniform memory) and prints `MEMBAR;`, where 264 is
+        WorkgroupMemory alone and prints `MEMBAR.CTA;` -- `.CTA` is the
+        workgroup.  Its ControlBarrier (2, 2, 264) prints `BAR ;` and a
+        `MEMBAR.CTA;`, as above.
+
+        Only those two semantics values and that one ControlBarrier form are
+        measured, so anything else refuses rather than picking a spelling.
+        """
+        if ins.opcode not in (Op.OpMemoryBarrier, Op.OpControlBarrier):
+            return False
+        _a = ins.args()
+        # A CONTROL BARRIER WITH NO MEMORY SEMANTICS PRINTS NOTHING.
+        # `water_00540147.tesc` and `water_1f555902.tesc` carry
+        # `OpControlBarrier [2, 4, 0]` -- workgroup execution, INVOCATION
+        # memory scope, semantics 0 -- and neither listing has a single
+        # `BAR` or `MEMBAR` line.  (notes/118 §1)
+        #
+        # CONFOUNDED and recorded as such: the only listings with a barrier
+        # that DOES print are compute shaders with semantics 264, so stage
+        # and semantics vary together and one of them could be the reason.
+        # Only this exact triple is dropped; anything else still refuses.
+        if (ins.opcode == Op.OpControlBarrier
+                and self._barrier_const(_a[0]) == _SCOPE_WORKGROUP
+                and self._barrier_const(_a[1]) == _SCOPE_INVOCATION
+                and self._barrier_const(_a[2]) == 0):
+            return True
+        _sem = self._barrier_semantics(_a[-1])
+        if ins.opcode == Op.OpMemoryBarrier:
+            self.lines.append(_sem)
+            self.stores = 0
+            return True
+        # every operand is an ID of a constant, not a literal
+        if (self._barrier_const(_a[0]) != _SCOPE_WORKGROUP
+                or self._barrier_const(_a[1]) != _SCOPE_WORKGROUP):
+            raise NotEstablished(
+                "a control barrier at a scope other than the workgroup: only "
+                "the workgroup form is in a listing")
+        if _sem != "MEMBAR.CTA;":
+            raise NotEstablished(
+                "a control barrier whose memory semantics are not the "
+                "workgroup's: only that form is in a listing")
+        self.lines.append("BAR ;")          # the oracle's space is its own
+        self.lines.append(_sem)
+        self.stores = 0
+        return True
+
+    def _barrier_const(self, sid):
+        """The value of a barrier operand, which is always a constant's id."""
+        _c = self.module.constants.get(sid)
+        if _c is None:
+            raise NotEstablished(
+                "a barrier whose scope or semantics is not a constant")
+        return _c.args()[-1]
+
+    def _barrier_semantics(self, sid):
+        """The `MEMBAR` spelling for a barrier's memory-semantics constant."""
+        _v = self._barrier_const(sid)
+        _mem = _v & _MEM_SEMANTICS
+        if _mem == _SEM_WORKGROUP_MEMORY:
+            return "MEMBAR.CTA;"
+        if _mem:
+            return "MEMBAR;"
+        raise NotEstablished(
+            "a barrier with no memory class in its semantics (%d): not "
+            "measured" % _v)
+
     # -- kills ----------------------------------------------------------------
 
     def _arm_kill(self, ins):
         """`KIL` is predicated like a branch, so it is preceded by a move into
         the condition register -- `MOV.U.CC RC.x, {1, 0, 0, 0};` with a
         constant TRUE, because the `if` has already tested the condition
-        (`fr_discard.frag`)."""
+        (`0011_fr_discard.frag`)."""
         if ins.opcode not in KILLS:
             return False
         self.lines.append(_cc_move(_bool_constant(True)))
@@ -686,6 +897,14 @@ class ControlOps(object):
         self._expire_local_forwards()
         self.blk_node = False
         self.node_next = False
+        # A VOID CALL HAS NO RETURN NAME.  `water_00540147.tesc` prints its
+        # two calls as the bare `CAL   BB8 (TR);` / `CAL   BB14 (TR);` with
+        # no MOV of a return value after either -- the value steps at
+        # 0xf12340..0xf12358 have nothing to read.  (notes/118 §1)
+        _rt = self.module.types.get(ins.result_type)
+        if _rt is not None and _rt.opcode == Op.OpTypeVoid:
+            self.retreg[_f.result] = None
+            return True
         _nres, _ds = self._width_suffix(ins.result_type)
         _mv = self._mov_for(_glasm_type_code(self.module, ins.result_type))
         if _mv is None or _ds is None:
@@ -748,6 +967,16 @@ class ControlOps(object):
             self.flush_q.append((_v, _mv, _ds, _grp, _dl))
         self._flush()
         self.lines.append(_RET)
+        return True
+
+    def _arm_unreachable(self, ins):
+        """`OpUnreachable` TERMINATES A DEAD BLOCK and prints nothing
+        (notes/114 \u00a753).  `debug_hiz-1.frag` has it as the terminator of
+        the block glslang opens after an `OpReturn`, which nothing branches
+        to; the compiler's listing has no line for it and no label.
+        `G2S_NOUNREACHABLE=1` refuses it again."""
+        if ins.opcode != Op.OpUnreachable or ENV.get("G2S_NOUNREACHABLE"):
+            return False
         return True
 
     def _arm_return(self, ins):

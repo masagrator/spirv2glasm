@@ -22,9 +22,9 @@ BLOCK_STORAGE = (StorageClass.Uniform, StorageClass.StorageBuffer)
 
 
 # A STORAGE IMAGE (OpTypeImage with Sampled 2: `image2D`, `uimageBuffer`)
-# has a window of its own at 256 (notes/110): `si_a.comp` binding 0 ->
-# `buffer[14][256]`, `si_b.comp` bindings 1 and 3 -> 264 and 280,
-# `si_c.frag` binding 2 -> 272, `si_e.comp` an unused binding 4 -> 288 and a
+# has a window of its own at 256 (notes/110): `0110_si_a.comp` binding 0 ->
+# `buffer[14][256]`, `0110_si_b.comp` bindings 1 and 3 -> 264 and 280,
+# `0110_si_c.frag` binding 2 -> 272, `0110_si_e.comp` an unused binding 4 -> 288 and a
 # `uimageBuffer` at binding 2 -> 272.  A sampled `texture2D` (Sampled 1)
 # stays at 328.
 STORAGE_IMAGE_BASE = 256

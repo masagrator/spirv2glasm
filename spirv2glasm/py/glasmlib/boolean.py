@@ -16,7 +16,7 @@ _BOOL_REPR_CODE = 0xc                   # U32, the same choice
 
 # The `continue` flag (notes/71): f_7100fafca0 makes it with the cgc type
 # f_7100f5aab0(cg, 0x2b), which reaches the IR as type 6 (`g2s_trace_wstmt`
-# on lp_wcont.vert: the variable node's [40] = 6) and is allocated in the
+# on 0071_lp_wcont.vert: the variable node's [40] = 6) and is allocated in the
 # SHORT class; one flag per loop body, the only SHORT temp any probe has.
 _CFLAG_TYPE = 6
 _CFLAG_REG = "H0"
@@ -51,7 +51,7 @@ def _bool_normalise(module, cond, reg, dst=None, mask=".x"):
     Anything else reaching a branch (a bool variable, a logical operation) is
     not a comparison and gets no such move; it is refused rather than guessed.
     The move writes the compare's own mask: a VECTOR compare's is whole
-    (`mq_n4.frag`'s `greaterThanEqual(v.xyxy, -v.xyxy)`: `SGE.F32 R4, ..;
+    (`0000_mq_n4.frag`'s `greaterThanEqual(v.xyxy, -v.xyxy)`: `SGE.F32 R4, ..;
     TRUNC.U R12, R4;`).
     """
     cd = module.result_insn.get(cond)
@@ -78,7 +78,7 @@ def _cc_move(src, mask=".x"):
     a constant is no instruction, so here it stays a MOV, whose own dummy
     destination is the register class 0x100 the namer f_7100bcf110 prints
     as `RC` (0xbcf1d4).  A VECTOR select's move writes the result's mask
-    (`sel_c.frag`: `MOV.U.CC RC.xy, R0;`)."""
+    (`0095_sel_c.frag`: `MOV.U.CC RC.xy, R0;`)."""
     return "MOV.%s.CC RC%s, %s;" % (_BOOL_SUFFIX, mask, src)
 
 

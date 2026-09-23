@@ -2,7 +2,9 @@
 
 Read this first (`SETUP.md` is the checklist for restoring the machine
 state from the package), then `SPIRV2GLASM.md`, then `PYTHON-STATUS.md`, then
-`notes/` from the highest number down.  This file is the WORKFLOW: what the
+`notes/` -- **`notes/README.md` indexes all 130 by mechanism**, which is now
+the way in: 115..130 are topic files (115..129 split out of 114), so "read from the
+highest number down" no longer describes the layout.  This file is the WORKFLOW: what the
 machine has to have, how the instruments are built and run, and what the next
 session should do.
 
@@ -35,8 +37,10 @@ Standing constraints, all still in force:
 
 ### The number that matters
 
-`tools/census.py` weights every refusal by the LISTING LINES it costs, over
-the 517 saved corpus listings.  Shader counts are misleading; this is not:
+HISTORY, AND WHY IT IS STILL HERE.  `tools/census.py` weights every refusal
+by the LISTING LINES it costs, because shader counts are misleading: one
+refusal in a 3,000-line listing costs more than fifty in short ones.  Over
+the 517 saved corpus listings it gave
 
 ```
  81202 lines   33 files  a branch arm that does not join at the merge
@@ -46,16 +50,22 @@ the 517 saved corpus listings.  Shader counts are misleading; this is not:
   2891 lines    6 files  a load that is not a straight interface read
 ```
 
-(re-measured after notes/70; the table below this paragraph's first version
-had `a load that is not a straight interface read` second at 26566 lines --
-the block-load suffix read moved those files on to the next refusal)
+(re-measured after notes/70; the table's first version had `a load that is
+not a straight interface read` second at 26566 lines -- the block-load
+suffix read moved those files on to the next refusal), and the 120
+listings in this package reproduced the same ranking at the same
+proportions.
 
--- re-measured over the 120 listings in this package.  The ranking is the same
-one the 517-listing run gave, at the same proportions: the top three are 96%
-of the corpus's lines, and two of them ARE the register question.
+**THAT TABLE IS NOW EMPTY.**  Prefix-only is 0 (§4): no module refuses, so
+`census.py` has nothing to weight and the causes above are all closed.  The
+method is what survives -- weight by LINES, not by files -- and it now
+belongs to DIFFERS: `fullcmp.py` gives lines matched and lines total per
+module, so the same weighting is one `awk` away, and that is the ranking to
+take before choosing what to work on next.
 
-Anything that is not one of the top three is not the priority, however
-satisfying it is to close.  Probes are a regression net, not a scoreboard.
+The rule the table taught still holds against the new ranking: work the
+few causes that carry the lines, and leave the rest however satisfying it
+is to close one.  Probes are a regression net, not a scoreboard.
 
 ---
 
@@ -130,6 +140,22 @@ after the SONAME (`glslc.nss` for subsdk0) and stubs two SDK internals.  Use
 it whenever a reading has to be checked against the real thing rather than
 against the translation.
 
+It needs `gcc-aarch64-linux-gnu` and `g++-aarch64-linux-gnu`, which are NOT
+installed by default here -- only the aarch64 binutils are, so the script
+fails at the compile step until `apt-get install` has run.
+
+`tools/qtest.c` is the ready-made subject: it drives `glslcCompile` with a
+SPIR-V module and prints whether it returned, with no hook and no listing
+(`g2s_hook.c` cannot be inserted into the untranslated library).  That is
+enough to answer "does the ORIGINAL fault here too", which is how notes/131
+established that seven opcodes crash GLSLC itself and not the port:
+
+```sh
+INC=/home/claude/work/ex/src/include ELF=subsdk0.elf ./qemu-ref.sh tools/qtest.c
+LD_LIBRARY_PATH=/tmp/run qemu-aarch64 -L /usr/aarch64-linux-gnu \
+    -E LD_LIBRARY_PATH=/tmp/run /tmp/ref_bin <module>.spv 1
+```
+
 ### 2.4  Background jobs: `run125.sh` / `poll125.sh`
 
 **A bash command must not exceed two minutes**, so anything longer runs in the
@@ -179,7 +205,7 @@ hooks.
                     and the same extra instruction.
 ```
 
-The extra instruction is the point: on `op_mul.vert` a `MOV.F R0, R0;` appears
+The extra instruction is the point: on `0011_op_mul.vert` a `MOV.F R0, R0;` appears
 with debug info on and is absent with it off, so **a shape measured under one
 form is that form's shape**.  The brief asks for both, so:
 
@@ -270,7 +296,7 @@ Then rebuild (§2.4) and run with the gate:
 
 ```sh
 G2S_TRACE=1 G2S_ONLY=fold,node build/spirv2glasm \
-    --opt-level none probes/op_mul.vert.spv 2>trace 1>/dev/null
+    --opt-level none probes/0011_op_mul.vert.spv 2>trace 1>/dev/null
 # and the same run with --debug-info g2 when the debug-info form is the
 # one in question (§2.6)
 ```
@@ -365,590 +391,96 @@ sweeps (`parcheck.sh`, `parvar.sh`) take an hour and are for diagnosis only.
 
 ---
 
+### 3.4  Reading the GLASM opcode off a line, and the GLSL front end
+
+Two instruments were added with the reference rewrite (notes/134):
+
+* `tools/opcodemap.py` files every printed line under the `node[8]` that
+  printed it, via `tools/nodedump.py`.  This needs `g2s_trace_node` on
+  `f_7100bd74f0` AS WELL AS on the two line printers -- the texture and
+  memory lines are printed there and never reach `f_710005c1dc`, so without
+  it no `TEX`, `LDC` or `ATOMB` line has any opcode evidence.  The hook is in
+  the tree; if the port is regenerated, put it back.
+  `MODULES=opcov/cover OUT=notes/opcode_evidence_cover.json` restricts the
+  walk to the six cover modules, which is the fast path.
+* `tools/glasmfromglsl.py` pulls the listing out of the `.nvn` that `glslc`
+  writes for a GLSL source.  The GLSL front end accepts shaders the SPIR-V
+  one refuses (fragment interlock, subroutines), so it is the only way to see
+  `FSIB`/`FSIE` and `CALI`; and when the backend fails, `glslc` prints the
+  listing it could not assemble, which is how the footprint family was read.
+  NOT `--output-assembly`: that is SASS, and the GLASM sits at the same
+  offset in the `.nvn` with or without it.
+
 ## 4.  Where it stands
 
 ```
-corpus  (120 listings)   exact 120 prefix-only 0    DIFFERS 0  failed 0
-                         120351 of 120351 lines (100.0%)
-probes  (654 listings)    exact 654 prefix-only 0    DIFFERS 0  failed 0
-                         57020 of 57020 lines (100.0%)
-slice   (1,400 modules)  exact 962 prefix-only 438  DIFFERS 0  failed 0
-full    (14,630 modules) the sweep of notes/114: 14,000 clean, and the
-                         tail is 2 DIFFERS out of the 630 newest
-                         listings (SS29, SS30 and SS31 in)
+probes      (680)     exact 680     prefix-only 0  DIFFERS   0  failed 0
+regression  (500)     exact 500     prefix-only 0  DIFFERS   0  failed 0
+FULL CORPUS (14,630)  exact 14,208  prefix-only 0  DIFFERS 422  failed 0
+the 60 that once      exact 13      prefix-only 0  DIFFERS  47  failed 0
+   refused
 ```
 
-(notes/111: storage images end to end -- STOREIM, LOADIM in every measured
-format, the image memory in both scheduling passes -- compute built-ins,
-STB chains; `notes/pending_probes/` is empty.  The probes ship as ONE
-archive, `probes.7z` (probes/ and listings/); nothing from the corpus is in
-the package, see SETUP.md.)
-
-(notes/114: the full-corpus sweep (14,630 modules, the oracle's own listings
-for all of them) -- TWENTY-EIGHT causes so far, each read from a trace.  The
-scheduler's: the condition records' place in the R live array (§5), a static
-load's node and record made AT ITS READER (§6), the component an
-anti-dependence is made for -- the one its writer is the LAST to write (§8),
-a handle pair's two loads made after their OR (§9), and a predicated write
-reading its own destination LAST, after the value it writes (§20).  The
-lowering's: a construct's lane read of a scalar stored whole (§2), a
-retargeted load forwarded as the local (§3), a swizzle of lanes a merge's
-pair passed through (§4), a plain copy transparent to a later lane read (§7),
-`{-0, ...}` (§10), two merge chains in one block (§11), a select's result
-stored to an output (§12, §18), a constant straight into its lane (§13), a
-scalar interface operand as a whole register (§14), a construct statement as
-a group whatever its size (§15), a copy of a local transparent PER COMPONENT
--- in the block (§16) and, through the source's register, across a block
-boundary (§21), a shuffle that selects lanes of one construct (§17), a
-PREDICATED select's arm taking the forwarded value where the branch form
-reads the name (§19), the construct's lane-x load renamed by the
-statement's flush (§22, it was being dropped as dead and the lane with it),
-a NEGATED whole read of a merged local reading the merge, like the bare
-and swizzled reads beside it (§23 -- the modifier is the operand slot's, not
-part of the name), a per-vertex input ARRAY whose first index is the
-vertex, not a component (§24), a `KIL` that is a node of its block rather
-than a barrier of its own (§25, read from `g2s_st` and visible in no
-listing), and -- the one the tail was mostly made of -- a CUBE sample
-reading THREE components of its coordinate, where reading all four left the
-`.w` live from the program's entry and meeting every temp in the graph
-(§26, 253 of the 289 differing shaders).
-Every one has an off-switch named in the note and a probe of its own.
-
-What is LEFT is the tail: of the 36 listings that still differed after
-SS28, 34 are exact and 2 differ (99.6% of their lines against 74.0%): only
-`particle_fog_block_init.comp` is left, and only for the order its lines
-come out in WITHIN the blocks -- its instruction count (325) and register
-count (34) are the compiler's.  notes/114 says what is ruled out and what
-instrument the rest needs.  The other 14,000 modules sweep clean, and a 500-shader
-set drawn at random from them is the fast regression each change is checked
-against (`reg500.stems`, DIFFERS 0).  `tools/p2check.py` runs
-our pass 2 on the compiler's OWN blocks (its stamps, its `entry[68]`, its
-edges) and every block of every shader tried passes, so the selector is
-exonerated; `tools/recnum.py` now agrees with the compiler's record
-NUMBERING on the shaders tried.  So the next read is the interference graph
-and the colouring: `tools/ifgjoin.py` joins the two graphs through pass 1's
-lists and streams the `ifg` dump from a file (it used to read it into a
-string and be killed by the memory limit -- see `ifgcheck.Dump`), and
-`tools/livecheck.py` still comes out with an empty def attribution at the
-positions in question, which is the thing to fix first.
-
-Use these rather than narrowing a rule until a listing matches:
-`tools/recnum.py` (the record numbering itself), `tools/waredge.py` (scores
-a candidate anti-dependence order against every reader in a trace),
-`tools/p2check.py` (pass 2 on the compiler's own input), `tools/regmap.py`
-(pairs the register tokens of two listings with no oracle at all and reports
-the first line where the renaming breaks -- it is what split the tail into
-its colouring and lowering halves).  notes/114 also records the rules that
-were READ AND DROPPED, with what contradicted each; a candidate that fixes
-one shader and breaks the shader an existing rule was read on is not a
-rule.)
-
-(notes/113: a trailing `ENDREP`/`ENDIF` -- inside the last block, with
-the RET -- now gets its dataflow edges, `ifg._trailing_structure`; a lane
-of a splat of a scalar local's load goes straight in.  The full corpus's
-`compute_volumefog_scatter-1` is exact.)
-
-(notes/112: the compiler has NO `re` any more -- `py/lex.py` and small
-named matchers, each quoting the pattern it replaced; `tools/lexfuzz.py`
-fuzzes them against those patterns.  Keep it that way: new text matching in
-`py/` is a scanner plus a `lexfuzz.py` check, never a regex.)
-
-(notes/110: storage-image headers, swizzled reads of a forwarded merge,
-write-after-read edges by component, the scalarised op's construct as a
-band temp.)
-
-(notes/109: the whole corpus sample is exact.  Position splats of a
-shuffled local, merge lanes read through a swizzle, outputs as live-array
-records, second colour stores, cube LOD, bool locals, flushed names as band
-records, the scalarised 2..3-lane ops ON (merge-lane reads, shared
-reciprocals, construct lane-x seqs), a name read after a merge pair
-(`_name_read_after_pair`, the scheduler's three refusals), and COMPUTE:
-GROUP_SIZE and storage-buffer stores (`STB`).  CI: tools/probecheck.py
-builds every probe, compute included, with glslang main.)
-
-(notes/108: `bitfieldInsert` lowers (one BFI node), the one-lane read pass
-f_7100069f90 is transcribed (glasmlib/replicate.py), derivatives are
-lane-wise, and a dozen read/order rules the `chr_*` files needed.  Corpus
-100 of 120 exact, 91,802 lines (76.4%), DIFFERS 0; probes 484/484.)
-
-(notes/107: the slice has NO DIFFERS -- exact 343, 305,257 of 1,848,212
-lines.  `map_3587d848` closed by three traced rules: each block's merge
-chains are numbered first (walk 1 of `f_7100036a70`), the other temps in
-creation order (walk 2), and the interference sweep walks the live ARRAY --
-seeded ascending, uses appended, kills swap-removed -- not the nibble set.
-Next by the census: OpBitFieldInsert (58,637 lines, 30 files), explicit-lod
-/fetch non-2D coordinates (22,002, 12), OpAny (6,506, 2).)
-
-(notes/106: the CONDITION REGISTERS are allocator class 1 -- each `.CC` set a
-vreg, CC0/CC1, `IF`/`KIL` reading it; an RSQ goes first in a MUL (the
-canonicaliser's MUL arm); every write of a name walks its lanes' implicit
-reader lists; a 2D TXL reads x, y, w; a lane-x component store's halves share
-one seq, other lanes two; a name read by an opened store restarts the name's
-record.  The slice is at one DIFFERS, `map_3587d848`: the lowering temps'
-record order, notes/77 §4's open item.  cc_a..d, ms_a, ow_a, on_a, on_b,
-lv2_a, tl_e, nr_a, pt_i, pt_j.)
-
-(notes/105: `_arm_logical` lowered fifteen more corpus files and all fifteen
-DIFFERED; four traced rules bring it to one -- `abs` of a local component
-keeps its lane and takes the merge pair's seq; the implicit reads are one
-list per written component, walked by both halves of a component store; a
-sampled image's `OR.S` is a name, live out of its block; a scalar temp whose
-output store opens a block is stored in the old block and the store reads the
-name.  The one left, `map_02774da9`, is an R2/R3 swap under investigation with
-`tools/ifgjoin.py`.  ab_a, hd_f, uo_a, uo_b, kd_a, la_a, la_b.)
-
-A wider sample lives outside the package: 1,400 corpus shaders with their
-oracle listings (made with `tools/mklistings.py`).  The 26 of them that
-differed before notes/101 are all exact now (notes/104); the whole slice is
-re-run in the background with `tools/compare.py <lst> <spv>`.
-
-(notes/104: the LONG handles are COLOURED -- class 4 of the same allocator,
-one record per `LDC.U64`/`OR.S`, ORs first; a handle load is one node per
-location per block, the OR its own; an insert reads a scalar block load's
-node (traced); colour outputs chain per component in pass 2's edges; a
-construct gathers every component of a vector into lanes past x (STILL
-LISTING-DERIVED, to be traced); a matrix part is a fresh load and a MOV at
-every read, and a store's only source node writes the destination (traced
-with gdb and the fold dumps, §7); a constructor's leading run of one node is
-one merged write, a load or a swizzle's MOV is lane x itself (§8); a select
-on a built bool vector sets RC lane by lane, on a stored lane from the
-local's lane (§9).  hd_a..e, lf_c..g, sw_a, cl_a..g, lx_a, lx_b, ld_mx,
-mx_b..h, pu_f..j; cr_n and lf_f moved to notes/ub_probes (undefined reads).
-Every probe is exact.  Open: `f_7100061760` itself (the constructor's
-expansion) is not read line by line; its output is.)
-
-(notes/102-103: name reads restart the record, the merge reader's seq, the
-traced lane rules, the operand canonicaliser; vertex merges and construct
-lanes.)
-
-(notes/101: a read that IS the stored value -- a plain store into lane x --
-against an insert or a component select (RC against HC for a select's
-`.CC`); a multi-lane selection is materialised by its store; output lanes
-take the value's MOV type; a construct's lane read gathers; one store per
-temp, the colour store tied to the forwarded store; an abs of a merge takes
-the merge's seq; a whole copy of a partly stored local is a pair; a
-constant splat is a 4-slot constant.  25 probes, probes 373.)
-
-(notes/100: vector selects on a splat of a bool -- a normalised compare's
-`RC.c`/`(NE.c)`, a whole bool local read as any load; a shuffle or extract
-holds no node.  A fitted temp-store rule retracted.  sel_e..sel_i.)
-
-(notes/99: shadow samples -- the coordinate rebuilt with the reference, the
-separate sampler's handles first; a construct's writes of components 1..
-first, then component 0, then the gathers.  sa_a..sa_d, ta_a.)
-
-(notes/98: a dot takes constant operands, padded, constant second.
-dt_a..dt_d, probes 340.)
-
-(notes/97: a constant store opening a block writes the constant, no
-carrier; a colour store from a local's NAME read has no self-move; a whole
-vec4 local takes a swizzled source; a forwarded scalar constant broadcasts
-`.x`.  lc_a..lc_d, probes 336.)
-
-(notes/96: DDX/DDY/fwidth of a vector: one instruction at the result's
-mask.  dd_a..dd_e, probes 332.)
-
-(notes/95: a vector select is `MOV t, false; MOV.U.CC RC.mask, c; MOV
-t(NE), true` -- predicated writes read RC and their destination in
-sched.parse; a select on a stored bool's component reads it as the branch
-does, into RC.  sel_a..sel_d, probes 327.)
-
-(notes/94: a non-constant texture lod is the coordinate construct's `.w`
-written from the value; tl_a..tl_d exact, probes 323.)
-
-(notes/93: no rule change -- the GLASM opcodes and type codes as a
-table in spirv.py's form, `py/glslc/glasm.py`; the namer decode redone by
-simulation, which fixed thirteen garbled ATOM names, TXG/TXP/TXD read as
-TXF/TXL/TXB, and dropped ATOMS.* the namers do not spell.)
-
-(notes/92: no rule change -- `glasm.py` split into `glasmlib/` and
-`glasmlib/lower/`, the long functions of sched/regalloc/liveness/ifg/binding
-split, every SPIR-V number by its Khronos name.  The kill arm's 4417 was
-`OpTypeUntypedPointerKHR`; it is now `OpDemoteToHelperInvocation`.  Listings
-unchanged.)
-
-(notes/91: a component store's pair is ONE seq unless the value is an
-extract or the store opened its block without reading the local; a store to
-a pending vertex output opens a block, no self-move; a store from a forwarded
-read joins the first store's tie; builtin operands print their selectors;
-FClamp takes the result's mask and a constant second.  basic_039bd1ee exact:
-corpus 56, probes 319, DIFFERS 0.)
-
-(notes/90: the general vector divide (per-lane RCP + MUL, or DIV when the
-divisor selects one component), constant second in commutative add/mul,
-two-component swizzles pad with the identity, WAR order sources last first,
-loop back edges in the liveness, shuffle partial lsplit.)
-
-(notes/89: two dynamic indices in a structured-buffer address, the
-identity folds (`x+0`, `x*1`, ... on scalars), the later-block dynamic load
-refusal lifted (`G2S_DYNLATERSTRICT` restores), input-component local
-stores forward the register.  Top refusal now: divides, 74989 lines.)
-
-(notes/88: gl_FrontFacing as the `facing > 0` expression its reader builds,
-`MOV.S.CC HC.x, -c` folded; integer immediates with bit 31 set print `0x%x`
-for unsigned types (f_710003dc10).  Top refusal now: a dynamically indexed
-block load read in a later block, 40969 lines.)
-
-(notes/87: vector bitcasts, shift lanes, the corpus's dither prologue
-(cuts `mq_n*`, all exact), and three allocation rules found through
-`ps_c.frag`: LONG handles count as single-component records, a 2D TEX
-reads two coordinate lanes, a whole local read takes the components the
-local ever stores (`@m` read-mask annotation).  `notes/ub_probes/` keeps
-a hand cut that reads an undefined component.)
-
-(notes/86: OpConvertFToS/FToU -> `TRUNC.<dst sign>`, the MOV legaliser's
-reading; pf_a..pf_c.  Next: vector float/integer bitcast (`bc_uf4.vert`,
-30039 lines), opcode 196 operands (23279).)
-
-(notes/85: an IF on a bool-vector component folds its `.CC` into the
-component select -> `MOV.U.CC HC.x, R3;` (`G2S_NOBCOMP`); component-store
-MOVs take the local's type; `o = u` right after `u.c = ..` in one block
-reads the MERGE, which becomes a lowering vreg copied into the local
-(`G2S_NOMERGEFWD`); scoped `(name, line)` pass-1 keys.  Probes pb_a..pb_d.)
-
-(notes/84: constant arrays in local memory -- `lm_icb`, `lm_icbf` exact.
-Element MOVs + element stores, `lmem<k>` one name in sched.py (a store
-reads it, a load releases its address first), `TEMP lmem<k>[N];`, and the
-colour store's self-move renames like the vertex outputs'
-(`G2S_NOCOLFLUSH=1`).  The corpus ICB files now stop on bool selects and
-branches that are not comparisons, and on opcode 109.)
-
-(notes/83: separate samplers (opcode 86: `LDC.U64` pair, `OR.S`, `LONG
-TEMP`), TEX band results, coordinate swizzles, forwarding of a swizzled
-local store, and a multiply by -1 as a negate MOV (`G2S_NONEGMUL=1` restores
-the MUL).  Next: `OpConstantComposite` local stores / immediate-constant
-`lmem` arrays, probes `lm_icb`/`lm_icbf`.)
-
-(notes/82: the "computation after a store" refusal is LIFTED;
-`G2S_STORESTRICT=1` restores it.  `G2S_LIFTSTORE` no longer does anything.
-The next targets are the line-weighted census's top refusals:
-`OpConstantComposite` local stores (63430 lines) and opcode 86 (25082).)
-
-(notes/81.  Under `G2S_LIFTSTORE=1` the corpus is 29212 lines, 48 exact,
-4 DIFFERS.)
-
-(notes/80.  Under `G2S_LIFTSTORE=1` the probes are 225 exact with 0
-DIFFERS, and the corpus is 27454 lines, 43 exact, 9 DIFFERS, most of them a
-`MUL.S R2/R3` register choice in `chr_*`.)
-
-(notes/79.  Under `G2S_LIFTSTORE=1` the probes are 215 exact with 0
-DIFFERS, and the corpus is 26392 lines, 40 exact, 12 DIFFERS.  When the 12
-are clean, drop the "computation after a store" refusal and `check.sh` will
-report about 22% instead of 11.4%.)
-
-(notes/78.  Under `G2S_LIFTSTORE=1` the probes are 209 exact and 2 DIFFER
-(`mb_n29`/`n30`: the lowering's statement order inside a block, §5); the
-corpus is 19978 lines.  `tools/ifgjoin.py` maps compiler vregs to
-placeholders through pass 1's lists and diffs the two interference graphs.)
-
-(notes/77: the `mb_*` cuts of `map_110833a5`.  Open: `mb_n18`'s register
-choice, the likely common cause of the corpus TEMP-count DIFFERS under
-`G2S_LIFTSTORE`.  Tools: `tools/vrjoin.py`, `G2S_VLINES`, `G2S_WALKS`,
-`G2S_PICKTRACE`.)
-
-(notes/76: `_reload` gives each block its own LDC, `_narrow_loads` sets
-each LDC's mask and suffix, and component chains into uniform vector
-members now lower.  `G2S_LIFTSTORE=1` corpus: 18862 lines, 29 DIFFERS.
-Most are the TEMP count in `map_*`/`chr_cloth_*`; bisect them with
-`probecut`.)
-
-(notes/75: one interned node per load location per block, same-node
-constructs, extracts, scalar broadcast.
-
-`G2S_LIFTSTORE=1` corpus: 16645 lines, exact 8, 1 DIFFERS
-(`chr_cloth_1c6be086`).  Once that one is clean, the next step is to lift the
-"computation after a store" refusal for real.)
-
-(notes/74: `gl_Position` component stores of computed values.  With
-`G2S_LIFTSTORE=1`:
-
-* probes: 186 exact;
-* corpus: 16396 lines, exact 3 (`chr_eye` is one of them), 6 DIFFERS.
-
-Next: `chr_cloth_*` (a DP4's register) and `map_*` (a pass-through copy).)
-
-(notes/73 covers four rules, each confirmed against the compiler's edges with
-`tools/gsum.py`:
-
-* merge reads, in `py/sched.py` `_reads_merge`;
-* position `.x` from an in-block component store;
-* every stored local is materialised;
-* pending component stores open a block.
-
-Probes `ce_n30`..`ce_n47` and `pt_a`..`pt_f`.)
-
-(notes/72 §9–§10: `ce_n29` is exact; it was cut with `tools/probecut.py`.
-`G2S_LIFTSTORE=1 tools/compare.py` measures the corpus with only the
-"computation after a store" refusal lifted.  That gives 15644 lines and 7
-DIFFERS: six at a `R15`/`R14` choice in the bone construct, and
-`map_0ae40bcc` at a pass-through MOV.  Bisect them with `probecut`.)
-
-(notes/72: three fixes.
-
-* Bitcasts are lowered as the reader builds them.
-* Splat stores have no self-move.
-* A temp is flushed at the `gl_Position` block close.
-
-The 3 prefix-only probes are the next targets:
-
-* `bc_uf4`: vector float bitcast;
-* `lm_icb` and `lm_icbf`: local-memory arrays.)
-
-(notes/71: loops with `break` and `continue` are read.  A constant-condition
-`if` folds before the IR (`f_7100ef7d50`), so `while (true)` works; a stored
-bool can be a branch condition; `continue` becomes the `H0` flag,
-`SHORT TEMP H0;`.  Line-weighted census, top refusals now:
-
-* a local store with no operand form: 63430 lines;
-* a non-straight load: 27451;
-* a computation after a store: 23002;
-* opcode 86: 6356.
-
-New hooks: `wstmt`, `irloop`, `cgif`, `cgnew`, `cgtree`.  The write watch is
-inert in the current port build (its `guest_rt.h` is not the instrumented
-one).)
-
-(notes/70: lens_flare_ghost_tex.frag exact; block loads' masks and width
-suffix read; nine new probes.  The Python converter now has a command line,
-`spirv2glasm.py`, see README.)
-
-### Machine notes from the last rebuild
-
-* Ubuntu plucky's GCC 15.0.1 compiler packages are gone from the mirror;
-  `gcc-15_15.2.0-4ubuntu4` (questing) + binutils 2.44-3ubuntu1 from
-  `archive.ubuntu.com/ubuntu/pool/main/{g/gcc-15,b/binutils}` work the same
-  way under `/opt/tc`.  The rebuilt oracle reproduces all 257 saved listings
-  byte for byte.
-* `aarch64-linux-gnu-objdump` (for `tools/dis.sh`) is `apt-get install
-  binutils-aarch64-linux-gnu`; `ELF=` must point at
-  `.../glslcportv9/subsdk0.elf`.
-* The glasm2sass capture hook is one line in `src/fn/f_71010d76b0.c` after
-  `f_7100ef60e0(cpu, 0);` plus its prototype; the Makefile's `spirv2glasm`
-  target was added by hand (no glasm2sass target to anchor the patch on).
-* `apply_hooks.py` misses one entry: `g2s_trace_regs` at `0x71000690a0` has
-  no label in this tree; the `0x71000690a4` entry beside it (the one
-  notes/67 uses) installs.
-
-**The transcribed allocator is on by default** (notes/54, notes/55), and
-with it the materialised local (`lo_parts`, `lo_half`, `lo_over` exact).
-Every stage of the allocator is checked against the compiler on its own
-inputs -- see step 3 of the plan below.  The `lo_*` order needed the
-compiler's IMPLICIT READS (0x49b88) modelled in `py/sched.py`'s pass 1 for a
-local's merge (notes/55 §7).  The block partition is now the compiler's
-rule, **one store per name per block** (notes/55 §8), which put `if_out` and
-`p04_out` right and lifted the "store to something else after a
-gl_Position store" refusal.  And the scheduling now runs in the
-compiler's sequence -- pass 1, allocate over pass 1's lists, pass 2 with
-edges on the allocated registers (notes/57; `G2S_NOALLOC1=1` for the old
-one).
-
-**Control flow now covers `if`/`else`, `while`/`for` (notes/64), the
-geometry stage's EmitVertex/EndPrimitive (notes/65) and `switch` (notes/66:
-cgc's switch lowering makes an IF chain whose compare folds its `.CC`, and a
-local store that opens a block reads the SPIR-V value's named temp) and
-subroutine calls (notes/68: CAL, parameter copies, the return name, liveness
-along the call edges).**  Every probe is exact; the one-component corpus
-constructs are notes/67, and `lens_flare_ghost_tex.frag` stops at a vec2
-local's component store (notes/67 §9).
-
-**The scheduler is on by default** (notes/53).  `py/sched.order_pre` runs
-notes/51's two passes on the converter's own lines, BEFORE `_allocate_
-components`, so the emission order of every body is computed.  Three inputs
-had to be fixed for that: pass 1 is the per-vreg release of notes/51 §2.1 and
-not a successor count; `node[36]` is a SOURCE POSITION, so lines measured to
-share one (a construct's four component writes, the four scalarised shifts,
-the divide's four reciprocals and its multiply) share a key -- which is why
-the scheduler must run before the allocator renames the values; and a list is
-a block, one per output-component assignment.  `G2S_NOSCHED2=1` restores the
-hand-written order.  Anything the emitter used to write in listing order now
-owes the scheduler CREATION order instead -- the scalarised shift and the
-divide's reciprocals both flipped to ascending.
-
-What that opened, in one stretch: `OpCompositeConstruct` from different
-values (four of five new `co_*.vert` probes exact), and then the whole
-TRANSCENDENTAL FAMILY -- `cos`, `sin`, `exp2`, `log2`, `rsq`, `pow` are the
-same construct with four per-component instructions in front of it, all six
-exact, no new rule.  `tools/probecheck.py` is the new one-probe check.
-
-The corpus figures are over the 120 saved listings THIS package travels with.
-Earlier reports quote 517 over a corpus that is not in the archive set; the
-ratios are the same and `tools/check.sh` derives its banners from what is
-actually on disk rather than restating a number.
-
-THE REGISTER ALLOCATOR is what the remaining probes wait on, and notes/52 has
-it mapped end to end -- the engine, the first-fit scan over component slots,
-the interference graph's two representations, the backward liveness sweep and
-its edge rule.  Two things in it are unread, and BOTH are now the single
-blocker in front of two constructs rather than a diffuse gap:
-
-* **the visiting order** (notes/52 §9, new).  `g2s_trace_regpick` prints
-  `record[48]`, `record[80]` and `record[16]` AT THE PICK, so each of the
-  driver's five attempts is measured with its own costs.  That corrects §3c:
-  every SINGLE-component vreg is visited in descending cost (equivalently
-  descending index) on all three probes measured, and the cost is `3 * V`,
-  not `4 * V`.  What is left is where the ONE multi-component record goes --
-  it is at neither its cost rank nor its index rank.  That decides whether a
-  composite construct shares a register with one of its own gathers, which is
-  the anti-dependence notes/53 §7 needs and cannot derive; `co_add1.vert` is
-  the probe that turns on it.
-* **what a block boundary makes live** -- the older question, which is what
-  `ifgcheck` still measures.
-
-These tools are oracles against the compiler itself, not against listings
-(`tools/regcheck.py`, which earlier versions of this list named, is not in
-the package):
-
-    tools/livecheck.py   the liveness, position by position
-    tools/ifgcheck.py    a derived interference graph vs the compiler's
-    tools/edgecheck.py   the scheduler's edge lists (1476/1476)
-
-`ifgcheck` stands at 202 of 418 vregs; the gap is the one unread rule, and
-notes/52 lists the candidate rules already ruled out by measurement so they
-are not re-proposed.
-
-`DIFFERS 0` has never moved off 0: nothing emitted disagrees with the
-compiler.  What is emitted is the header, the `#var`/`#semantic` blocks, the
-declarations, and the body of the single-block shaders whose every value is
-already an operand.
-
-### Read and wired
-
-The opcode chain (SPIR-V op → worker operator → lowering family → emitter
-opcode → mnemonic → type suffix → write mask), the `SUB` peephole, the `-O0`
-store shape, register NAMING, the option set the listings were captured under,
-the negate, the image instructions' mnemonics (notes/33) and the
-GLSL.std.450 builtins that lower to one whole-vector instruction
-(notes/39, `py/data/extinst_shape.json`).
-
-### The ORDER, read end to end (notes/51, and it supersedes part of notes/49)
-
-A LIST IS A BLOCK.  `f_710003bb10` walks `program[184]` and calls
-`f_710004a2e0` once per block; every node that block schedules is linked into
-its own `block[32]`.  There is no loop over lists inside the emitter, which is
-what notes/49 was looking for.
-
-And there are TWO scheduling passes, not one pass and a re-link:
-
-* `f_710004a2e0` -- seeds the ready list from `block[80]`, takes the block's
-  terminator first, then among ready entries takes the list's TAIL (the
-  oldest), emitting a pick only if `node[48]` is non-zero and its opcode is
-  not one of the five roots.  Release passes THROUGH opcodes 1, 0x3a, 0x57 and
-  0x5a -- `f_7100049780` recurses into their slots instead of decrementing
-  them -- which is what puts the instructions behind a merge chain on the list;
-* `f_710004b220` -- moves each block's list aside and schedules it AGAIN, with
-  its own selector `f_710004ba90` (readiness filter, smallest `node[36]`,
-  earliest `entry[68]`), back-pushing each selection.  Its output is the
-  printed order directly.
-
-`tools/schedcheck.py` implements the first pass and reproduces the compiler's
-PICK order node for node; over the probes it gets the printed order right on
-**89 of 113**, and the 24 it misses are the blocks the second pass reorders.
-`tools/selcheck.py` implements the second pass's gate and comparator and
-reproduces its every choice: **113 probes, 1791 selector calls, 1791 OK**.
-
-Two things in the second pass are worth carrying into any model of it:
-`f_71000476f0` gates on a CYCLE CLOCK (`cg[28]` against the first pass's
-`entry[52]`) with `cg[20]` as a resource mask, and `f_710004ba90`'s comparator
-is a SCAN whose second test can overturn its first -- so it must be walked,
-not sorted, and the ready list's order is part of the rule.
-
-### Read but NOT yet wired -- this is the next session's work
-
-**The operand slots** (notes/47).  Sources are at `node + 0xa8 + 0x28 * i`,
-`node[153]` counts them, the destination is printed separately.  A slot is
-`{type object, (modifier << 32) | type, flag, node, swizzle/mask}` and the
-modifier is 0 none, 1 negate, 2 absolute value.
-
-**The order** (notes/49).  The comparator's second arm shows `node[32]` is
-zero on every node, so both arms always take the candidate and the scan keeps
-the list's TAIL: among ready nodes the scheduler takes the OLDEST.  Two
-insertion passes exist -- `f_7100030c74` builds each list front-first,
-`f_7100030cfc` re-links back-first -- and the second stream IS the listing.
-`tools/emitorder.py` confirms it on 90 of 90 probes.  What is left is what
-OPENS a list, in `f_710004a2e0`'s walk over `block[80]` (one entry per
-pre-scheduling instruction, its node at `entry[32]`).
-
-**The allocator** (notes/48).  The colour is written at `0x45e54` in
-`f_7100045530` as `record[64] = found & (-4 << alignment)`; `f_7100045ed0`
-only ever writes -1 and is the simplify phase.  The path is
-`f_710003bc94 -> f_71000473b0 -> {f_7100046a80, f_7100046b60 -> f_7100043460
--> f_7100045530}`, with `f_7100044e10` marking the taken byte offsets per
-component and `f_7100bdfaa8` giving the width (1 for every type this emits, so
-`R<N> = record[64] / 4`).  `g2s_dump_graph` dumps the whole input.
-
-### The plan
-
-0. **The second pass's WORKLIST ORDER** -- the last input the order takes
-   from the compiler.  Everything else on the thread is now read and
-   measured (notes/51):
-
-       tools/schedcheck.py  113 probes    89 OK   24 MISMATCH  (pass 1 order)
-       tools/selcheck.py    113 probes  1791 calls 1791 OK  0  (pass 2 picks)
-       tools/ordercheck.py  113 probes   113 OK    0 MISMATCH  (the LISTING)
-
-   `ordercheck.py` runs the whole second pass -- cycle clock (`cg[24] << 4`,
-   `f_71000477a0`), resource records (`f_71000476f0` / `f_7100047768`, one
-   issue per cycle on this profile), the scan comparator, the DAG's
-   dependences and the WORKLIST (a stack; `entry[64]` counts unscheduled
-   predecessors and `entry[52]` is raised to `clock + 1` on every release) --
-   and reproduces the printed order on 92 probes.
-
-   **The ORDER is reproduced in full.**  Every probe's scheduled order is the
-   compiler's, node for node.  Nothing in the model is fitted: the cycle
-   clock, the resource records, the gate, the scan, the worklist and the edge
-   order are all read (notes/51 §2-§6).
-
-   14 probes print one or two instructions that are in NO block's `block[32]`
-   at the second pass's entry -- opcode 0x26 in the loops and geometry
-   shaders, 0x95 in the switch.  Pass 1 never linked them, so the scheduler
-   never sees them; `ordercheck.py` reports them as `+N unscheduled` rather
-   than as mismatches.  The control-flow lowering puts them in the listing by
-   a route the scheduler is not on, and reading that route is its own thread.
-
-   **What the order still TAKES from the compiler** is where the next read is:
-   the dependence edges themselves.  `ordercheck.py` is handed the successor
-   lists, as it is handed `entry[52]` and `entry[68]`.  What decides an edge
-   exists, and whether it is kind 0, 1 or 2, is `f_710004bd60`'s caller loop
-   (0x4b5c0..0x4b608) and `f_710004ab80`'s component arithmetic
-   (0x4ac2c..0x4ac6c) -- a liveness question, and the same one notes/48 leaves
-   open for the allocator, so reading it serves both threads.
-
-   After that, what stays the compiler's is `entry[52]` / `entry[68]` as the
-   first pass leaves them, and the DAG builder's output: `node[36]`, the block
-   partition and the initial `node[88]`.
-1. ~~Give `py/glasm.py` a node IR instead of emitting text directly.~~  Not
-   done, and no longer the blocker it was assumed to be: `py/sched.py` parses
-   the converter's own lines back into (mnemonic, dest+mask, sources+masks),
-   which is the same information, and the `#n` placeholders turned out to be
-   an ASSET -- they are one name per vreg, which is what `node[36]` needs and
-   what a register name destroys (notes/53 §2).
-2. ~~Implement the scheduler.~~  DONE and on by default (notes/53):
-   `sched.order_pre` runs both passes over the converter's lines, before the
-   allocator.  `G2S_NOSCHED2=1` restores the hand-written order.
-3. Implement the allocator properly: liveness -> per-component interference ->
-   simplify -> the visiting order of notes/52 §9 -> lowest free aligned
-   colour.  **Transcribed and checked stage by stage against the compiler**
-   (notes/54, notes/55), each fed the compiler's own inputs:
-
-       front-end dataflow  py/dataflow.py   tools/dfcheck.py     probes 121/121, corpus 119/119
-       per-block seed      liveness.seed    tools/seedcheck.py   78427/78427 seeds (corpus)
-       graph builder       liveness.build   tools/graphcheck.py  134/134, corpus 288/288
-       driver + attempts   regalloc.allocate tools/drivercheck.py 134/134, corpus 288/288
-       simplify + select   regalloc          tools/simpcheck.py   254 + 1104 attempts OK
-
-   It runs on the converter's lines (py/ifg.py) and is ON BY DEFAULT
-   (`G2S_NOREGALLOC=1` falls back to `_allocate_components`).  What is still
-   a MODEL on that path is the front end: which converter values are cgc
-   names, how blocks are formed, and the name numbering (notes/55 §5-6).
-4. Only then open up loads of locals, local stores and control flow, which is
-   where the corpus's 570k lines are.  The local assembled from parts is
-   now emitted by default (notes/55 §7); the corpus's leading refusals are
-   loops with break/continue ("a branch arm that does not join at the
-   merge") and computation after a store.
-
-Each step is verified against the compiler's own dumps, not against listings.
-
----
+**THE NEXT PIECE OF WORK IS THE 422.**  The full sweep finished 2026-09-23
+and they are the entire remainder: nothing is prefix-only and nothing fails.
+Split them first --
+
+```sh
+S=<scratchpad>
+python3 tools/diffkind.py --tsv $S/fullcmp.tsv $S/full_lst $S/full_spv
+```
+
+-- which prints RENAME / REORDER / MISSING per stem and a count at the end.
+The census of 164 of them said 137 were the `map_*` family in the RENAME
+class: same instructions, same TEMP budget, a permuted register assignment,
+i.e. the allocator's visiting order.  Fix by cause, re-run the two gates, and
+do not start a new capability until this is 0.
+
+Re-measured 2026-09-23: the 60 give 15,918 of 46,419 listing lines (34.3%),
+the probes 59,053 of 59,053 (100%) and the 120-shader corpus sample 120,351
+of 120,351 (100%).
+
+**PREFIX-ONLY IS 0.**  Every module in the corpus converts to the end.  The
+refusal census (notes/114 §78) found 60 modules that stopped early, in 21
+distinct causes; notes/115..130 close all of them.  What is left is DIFFERS
+-- our line against the compiler's -- and most of it is the register
+allocator.  `PYTHON-STATUS.md` has the breakdown.
+
+### The two gates
+
+* `python3 tools/probecheck.py -j 2` -- 680 probes, about a minute.  It
+  prints `FAIL <probe>: <reason>` per failure, so run it FIRST and read its
+  output; do NOT loop `spirv2glasm.py` over probes by hand, which is what it
+  is for and ten times slower.
+* `sh tools/exact500b.sh` -- 500 corpus shaders drawn from the ones that were
+  exact, about 8 minutes.  Run before calling a cause closed.
+
+### Probes and listings
+
+* A probe is named for the note that reads it: `0104_pu_j.vert`,
+  `0119_bar_a.comp`.  `0000_` means it predates the note that would name it.
+  Rename with the note, not after it.
+* `listings/` is the GATE: every listing there must match byte for byte.
+* `listings_open/` is EVIDENCE: the oracle's listing for a probe whose rule
+  is read but not implemented.  It moves into `listings/` when the rule
+  lands.  Do not delete an oracle listing to make a suite green.
+* Take a probe's listing with `spirv2glasm --opt-level none <spv> | sed
+  '1{/bytes of SPIR-V/d}'` -- the oracle prints a banner line on stdout that
+  no listing in `listings/` has.
+
+### Two census tools, and which answers what
+
+* `refcensus.py` (`ONLY=`, `OUT=`) -- one line per module, the last stderr
+  line or empty.  A refusal is exactly what makes a listing prefix-only, so
+  this is the PREFIX census and needs no oracle listing.  It says nothing
+  about exact against differs.
+* `fullcmp.py` (`OUT=`) -- one row per module: stem, kind, lines matched,
+  lines total, in chunks of 200, appended as it goes.  This is the one to
+  run when the question is "which modules differ".
+* Both are RESUMABLE from their output file, which matters: a background
+  job is killed at the TURN boundary, not only when its shell exits.  Relaunch
+  and it picks up.  `sleep 570` in the foreground is allowed and is the
+  cheapest way to wait on a long one.
 
 ## 5.  Rules of the road
 
@@ -962,4 +494,31 @@ Each step is verified against the compiler's own dumps, not against listings.
   which form the measurement belongs to (§2.6, notes/50).  `--opt-level none`
   is constant; the debug-info level is not, and the two forms the brief asks
   for differ in the BODY, not only in comments.
-* Don't reinvent a tool -- look in `tools/` first.
+* Don't reinvent a tool -- look in `tools/` first.  `FLAGS.md` is the same
+  point for the ~300 `G2S_*` switches: every rule has one, and turning the
+  newest off one at a time is how a regression is bisected without editing
+  code.  177 of them have NO prose at their site, which is a real gap --
+  when you touch one, write the sentence.  A switch typed out of a note may
+  not exist any more: FLAGS.md's last table lists the ones the notes name
+  and the code does not, and says which took over (`G2S_LOCALREG=1` in a
+  note is `G2S_NOLOCALREG=1` inverted today).  And don't reinvent a
+  FUNCTION either: grep for the name before adding one.  A
+  `_per_vertex_location_operand` was added this session that silently
+  shadowed an existing function of exactly that name (and reused its env
+  flag), and cost three wrong reverts before the collision was found.
+* A refusal message must name ONE condition.  The corpus's largest
+  prefix-only bucket was a single string raised for three different
+  conditions in two functions, which made 1,223 modules unreadable as a
+  cause (notes/114 §78).  Two more followed the same pattern: "the
+  scheduler's model does not place this body" for five modules whose real
+  fault was that `BAR ;` does not LEX (notes/119 §2), and "an image op with
+  extra operands ... the handle load lands inside that construction" for
+  five whose real fault was a one-word `offset()` operand (notes/120 §2).
+  When a message names a mechanism, check that it IS the mechanism.
+* A census is evidence WITH A DATE.  Re-take it before choosing what to work
+  on.  A stale one sent this session at the 8-shader tail of a list whose
+  1,223-shader head had already closed itself (notes/114 §78).
+* When four attempts in a row regress the probes, the model is probably
+  right and the TRIGGER is wrong.  notes/129 is the worked example: four
+  attempts at the vreg identity cost 40-240 probes each, and the fix was two
+  guards in the function that decides whether to split the vreg at all.

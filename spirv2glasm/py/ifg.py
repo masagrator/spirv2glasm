@@ -1,8 +1,8 @@
 """ifg.py -- the interference graph `f_7100043460` builds, from the
 converter's own lines, and the colouring of notes/54 run on it.
 
-WHAT IS READ AND WHAT IS NOT.  The sweep is `f_7100043460` (vt[16]) as
-notes/54 §10 reads it: positions are visited LAST TO FIRST; at a block
+WHAT IS READ AND WHAT IS NOT.  The sweep is `f_7100043460`, notes/54 §1's
+`vt[16]`, as notes/52 §7 ("The builder, read") reads it: positions are visited LAST TO FIRST; at a block
 boundary the live set is re-seeded from the block's annotation; at each
 position the DEFS are edged against every live member (`f_71000432c0`), then
 killed, then the USES are made live.  An edge is kept on the HIGHER index's
@@ -30,6 +30,7 @@ after them, and the converter approximates the first group by the band.
 import os
 import sys
 
+import os as _os
 import lex as _lex
 import regalloc
 
@@ -60,6 +61,26 @@ def positions(items):
     placeholder `#n` names vreg n.  Anything else (an interface operand, a
     constant, a condition register) is not a temp and takes no part.
     """
+    # A COMPONENT NOTHING EVER DEFINES IS NEVER LIVE THROUGH A WHOLE-OPERAND
+    # READ (notes/114 \u00a760),
+    # read off the compiler's own graph: every edge of `debug_mask_bg.frag`'s
+    # vreg 30 carries 0 in its THIRD word -- `33[0,0,0,ff] 16[ff,ff,0,ff]
+    # 15[ffff,ffff,0,ffff] ...` -- so that vreg's `.z` interferes with
+    # nothing.  It is a texture coordinate written `.x`, `.y` and `.w`, and
+    # the `TXF` that reads it reads the operand WHOLE; taking the read at
+    # face value left `.z` live from the block's start and gave the vreg an
+    # edge to everything before it.  The compiler put it in R0 along with
+    # three of those supposed neighbours, which is the same fact from the
+    # other side.  `G2S_NOUNDEFLIVE=1` takes the read at face value again.
+    _defined = {}
+    if not _os.environ.get("G2S_NOUNDEFLIVE"):
+        for it in items:
+            if it is None:
+                continue
+            _d, _dm = it[1]
+            _v = _place(_d.strip()) if _d else None
+            if _v is not None:
+                _defined[_v] = _defined.get(_v, 0) | _dm
     out = []
     for it in items:
         if it is None:
@@ -81,7 +102,10 @@ def positions(items):
             if m is not None:
                 if smask == 0xF and dmask and not whole:
                     smask = dmask
-                uses.append((m, smask))
+                if whole and m in _defined:
+                    smask &= _defined[m]
+                if smask:
+                    uses.append((m, smask))
         out.append((defs, uses))
     return out
 
@@ -104,7 +128,7 @@ def if_successors(lines, spans):
     the back edge anyway), but a THEN arm does not flow into its ELSE arm:
     its block ends at the ELSE, which branches to the ENDIF.  The
     compiler's dataflow (`f_710006e7c0`, py/dataflow.py) follows the real
-    edges, and on `sc_select.frag` the result register of the select
+    edges, and on `0067_sc_select.frag` the result register of the select
     (live in the ELSE arm only) does not meet the THEN arm's operand.
 
     Each structure word is a block of its own (`sched.span_sizes`), so the
@@ -570,7 +594,7 @@ def walk_keys(lines, items, spans, carriers=frozenset()):
     The lowering's temps get their records per block, in two walks over the
     block's nodes: the first (callback `f_7100036b10`) numbers the COPIES
     (IR opcode 0x47), the second (`f_7100036cc0` -> `f_7100036e34`) every
-    other node.  `mb_n18.vert`'s block 3: the construct's vreg is 55, ahead
+    other node.  `0077_mb_n18.vert`'s block 3: the construct's vreg is 55, ahead
     of the LDC, the ADD (57) and the address MULs (58..) created before it.
     A carrier (0x4a, `MOV.S` in print) is not a copy.  Returns
     `{vreg: (block, walk)}` for the first definition of each vreg."""
@@ -645,7 +669,7 @@ def order_records(vregs, band, order_key=None, walks=None, merges=None):
     `order_key` maps a placeholder to the number it is created AT when that
     is not its own: a temp's lowering vreg that the flush renamed (notes/72)
     was made where the value was, so it takes the value's original number --
-    `ce_head.vert`'s records put the ADD the flush renamed (26) right after
+    `0072_ce_head.vert`'s records put the ADD the flush renamed (26) right after
     the LDC (25), not after every other temp."""
     key = order_key or {}
     first = sorted(v for v in vregs if v in band)
@@ -702,7 +726,7 @@ def _long_singles(items):
     """THE LONG HANDLES ARE RECORDS TOO (notes/87): every `LDC.U64 Dn.x` and
     `OR.S Dn.x` is a vreg of its own, one component wide, and the driver's
     single-component count (`regalloc.singles`, 0x46c40) runs over every
-    record whatever its class -- `ps_c.frag`'s one R-class single (`t`) plus
+    record whatever its class -- `0087_ps_c.frag`'s one R-class single (`t`) plus
     three handles crosses the `nsingles >= 2` line of the cost formula, and
     the colouring order with it."""
     if os.environ.get("G2S_NODSINGLES"):
@@ -801,7 +825,7 @@ def allocate_long(lines, spans):
     index = dict((v, i + 1) for i, v in enumerate(order))
     # THE SAMPLED IMAGES ARE NAMES: the block that makes an `OR.S` handle
     # STORES it, so it is in the block's live-out seed at the mask it writes
-    # (notes/55, `+0xb0`).  `hd_f.frag`'s block 2 seeds names 12 and 15 --
+    # (notes/55, `+0xb0`).  `0105_hd_f.frag`'s block 2 seeds names 12 and 15 --
     # records 7 and 10, the two ORs, type 10 -- and the seed's class-4
     # counter is 2 (`g2s_seedin`/`g2s_seedout`); the handle LOADS are not
     # in it.  So an OR is live from the block's end back to its def, and
@@ -913,7 +937,7 @@ def allocate_cond(lines, spans):
     """Colour the CONDITION REGISTERS with the compiler's allocator, CLASS 1
     (notes/106).  `f_7100046b60` runs class 1 before class 3 (`g2s_eng
     class=1`, `map_02774da9`), called with `symbase` 0x100, `w6` 0 and `w7`
-    2 (gdb at its entry, `kd_a.frag`); `g2s_simp` gives `cls8` 2 -- CC0 and
+    2 (gdb at its entry, `0105_kd_a.frag`); `g2s_simp` gives `cls8` 2 -- CC0 and
     CC1 -- and `cls12` 4; the records are type 26, `h22` 4, their `cm` the
     components the set writes (`RC.xy` is 0xffff).  `tools/simpcheck.py`
     reproduces every class-1 attempt of `map_9a0b11a0` with the transcribed

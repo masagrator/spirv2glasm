@@ -2,7 +2,7 @@
 
 A per-node pass of the step between the builder and the printer (called from
 f_7100053d80 under f_7100054130 / f_710003a500, beside the SUB peephole
-f_7100069df0 of notes/38).  Found with a watchpoint on `ns_e.frag`'s ADD
+f_7100069df0 of notes/38).  Found with a watchpoint on `0108_ns_e.frag`'s ADD
 slot 0 selector (`node + 200`): 0x03020100 -> 0 there.  For every node but a
 store (op 0x3a), for every slot i whose inline flag (`slot + 16`) is clear:
 

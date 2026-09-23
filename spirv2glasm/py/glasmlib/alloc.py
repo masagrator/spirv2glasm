@@ -6,7 +6,7 @@ reimplementation of what a straight-line block can show, kept as the
 fallback the lowering uses when the transcribed allocator declines a body:
 a value occupies a register from its definition until its LAST USE, and a
 definition takes the lowest register free at that point -- so a result may
-reuse the register of a source that dies feeding it.  `p05_ubo.vert` is the
+reuse the register of a source that dies feeding it.  `0005_p05_ubo.vert` is the
 case that forces it:
 
     LDC.F32X4 R0, buf0[0];              R0 defined
@@ -142,7 +142,7 @@ def _slot_fits(v, slot, first, last, taken):
             # A definition landing on another value's LAST USE is a touch,
             # not an overlap -- the convention notes/52 measured (inclusive
             # overlap scored 55/430 against this one's 202/418).  It is what
-            # lets `op_div.vert`'s multiply retake the register its
+            # lets `0038_op_div.vert`'s multiply retake the register its
             # reciprocals die in.
             if last[(v, c)] <= first[(ov, oc)] \
                     or last[(ov, oc)] <= first[(v, c)]:
@@ -175,13 +175,13 @@ def _allocate_components(lines, band=(), wide=()):
             v, mk = d
             width[v] = max(width.get(v, 0), bin(mk).count("1"))
     # Registers are handed out in CREATION order, which is the placeholder's
-    # own number -- `un_sqrt.vert` creates its four `RSQ` temps in ascending
+    # own number -- `0033_un_sqrt.vert` creates its four `RSQ` temps in ascending
     # component order and emits them in descending order, and the compiler
     # gives component c register c.
     taken = {}
     assign = {}
     for v in sorted(set(v for v, _ in last)):
-        # A BAND temp occupies a whole register.  `un_sqrt.vert`'s four `RSQ`
+        # A BAND temp occupies a whole register.  `0033_un_sqrt.vert`'s four `RSQ`
         # results are written `.x` only and still take `R0`..`R3`, one each:
         # the vreg is four components wide whatever the node's write mask is,
         # which is also why the band size is the register count.  `wide` is
@@ -189,7 +189,7 @@ def _allocate_components(lines, band=(), wide=()):
         # a temp seeded live at every block, but a composite construct's vreg
         # and the gathers that feed it take a REGISTER each (their symbols are
         # consecutive, 512, 513, 514) without being live past their last read
-        # -- which is exactly how `co_mix4.vert` puts the construct and its
+        # -- which is exactly how `0052_co_mix4.vert` puts the construct and its
         # first gather both in `R0`, one in `.x` before the other writes it.
         n = 4 if (v in band or v in wide) else width.get(v, 4)
         stride = 1 if n <= 1 else (2 if n == 2 else 4)
@@ -221,8 +221,8 @@ def _allocate(lines, band=()):
     A value is DEFINED at the first line it appears on and DEAD after the
     last.  At each line the values that die there are freed first, then the
     line's new value takes the lowest free register -- which is what lets a
-    result retake a dying source's register (`p05_ubo.vert`) and what lets a
-    condition's register be reused inside the arms of an `IF` (`cf_if.vert`).
+    result retake a dying source's register (`0005_p05_ubo.vert`) and what lets a
+    condition's register be reused inside the arms of an `IF` (`0026_cf_if.vert`).
     """
     first, last = {}, {}
     for i, l in enumerate(lines):
@@ -231,7 +231,7 @@ def _allocate(lines, band=()):
             last[v] = i
     # A BAND temp is live to the end of ITS BLOCK, not of the program.  The
     # compiler re-seeds the live set per block from that block's own
-    # annotation (notes/52), and `un_clamp.vert` shows the difference: its MIN
+    # annotation (notes/52), and `0048_un_clamp.vert` shows the difference: its MIN
     # is in block 1's annotation only, so the scratch register of the later
     # component stores reuses `R0` even though the MIN is a band temp.  A
     # block here ends at a store to a program OUTPUT, which is what the `0x8`

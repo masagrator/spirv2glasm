@@ -18,13 +18,13 @@ from glasmlib.common import NotEstablished, ENV
 from glasmlib.types import _components, _glasm_type_code
 from glasmlib.operands import _constant_source
 from glasmlib.blocks import _opaque_offset
-from glasmlib.text import _emit, _source, _swizzle
+from glasmlib.text import _COMPONENTS, _emit, _source, _swizzle
 from glasmlib import nodes
 
 _IMAGE_DIM = {Dim.Dim1D: "1D", Dim.Dim2D: "2D", Dim.Dim3D: "3D",
               Dim.Cube: "CUBE",
               # a texel buffer, `texelFetch(samplerBuffer, i)` (notes/111,
-              # `si_e.comp`: `TXF.F R3, {1, 0, 0, 0}, handle(D1.x), BUFFER;`)
+              # `0110_si_e.comp`: `TXF.F R3, {1, 0, 0, 0}, handle(D1.x), BUFFER;`)
               Dim.Buffer: "BUFFER"}
 
 # THE IMAGE OPS' GLASM OPCODES, MEASURED -- not their mnemonics read off a
@@ -34,18 +34,34 @@ _IMAGE_OP = {
     Op.OpImageSampleImplicitLod: nodes.TEX,
     Op.OpImageSampleExplicitLod: nodes.TXL,
     Op.OpImageFetch: nodes.TXF,
-    Op.OpImageSampleDrefImplicitLod: nodes.TEX,     # `sa_a.frag`: TEX.F
+    Op.OpImageSampleDrefImplicitLod: nodes.TEX,     # `0099_sa_a.frag`: TEX.F
+    # `0114_sd_a.frag`: a shadow sample AT AN EXPLICIT LOD is `TXL.F R2, R0,
+    # handle(D0.x), SHADOW2D;` -- the depth reference rides in the
+    # coordinate's `.z` as it does for the implicit form, and the lod rides
+    # in `.w` as it does for every other `TXL` (notes/114 \u00a763), so the two
+    # mechanisms compose and neither is new.
+    Op.OpImageSampleDrefExplicitLod: nodes.TXL,
+    # `textureGather` prints `TXG.F R3, <coord>, handle(D0.x)<.c>, 2D;` --
+    # the sample line with the gather's COMPONENT on the handle (notes/114
+    # §83).  The node's opcode is NOT read: the `--node` tracer is not on
+    # the printer that emits texture lines, so `nodedump` reports no record
+    # for a `TXG`.  It does not have to be: all four opcodes the namer maps
+    # to `TXG` (0x19c, 0x1a6, 0x1a9, 0x1aa) give the same `TXG.F` for this
+    # type, so the line's text is fixed whichever it is.
+    Op.OpImageGather: 0x19c,
 }
 # A depth comparison: the reference rides in the coordinate (notes/99).
-_DREF_OPS = (Op.OpImageSampleDrefImplicitLod,)
+_DREF_OPS = (Op.OpImageSampleDrefImplicitLod,
+             Op.OpImageSampleDrefExplicitLod)
 
 # THE TARGET KEYWORDS MEASURED for arrayed and shadow images, `SHADOW`,
-# `ARRAY`, then the dimension: `ta_a.frag` `ARRAY2D`, `sa_c.frag`
-# `SHADOW2D`, `sa_a.frag` `SHADOWARRAY2D`.  Any other combination is refused
+# `ARRAY`, then the dimension: `0099_ta_a.frag` `ARRAY2D`, `0099_sa_c.frag`
+# `SHADOW2D`, `0099_sa_a.frag` `SHADOWARRAY2D`.  Any other combination is refused
 # rather than spelled by analogy.
 _MEASURED_KEYWORDS = frozenset(("ARRAY2D", "SHADOW2D", "SHADOWARRAY2D"))
 # `TXL` and `TXF` take the lod packed into the coordinate's `.w` (notes/61).
-_LOD_OPS = (Op.OpImageSampleExplicitLod, Op.OpImageFetch)
+_LOD_OPS = (Op.OpImageSampleExplicitLod, Op.OpImageFetch,
+            Op.OpImageSampleDrefExplicitLod)
 
 # The separate sampler's handle is ORed into the texture's (notes/83).
 _HANDLE_OR = "OR.S"
@@ -85,7 +101,7 @@ def _handle_offset(module, var, refusal):
 
 
 # A STORAGE IMAGE's target keyword (notes/111), measured for each
-# dimension: `st3.comp` (image1D) `1D`, `si_a.comp` `2D`, `st2.comp` `3D`,
+# dimension: `st3.comp` (image1D) `1D`, `0110_si_a.comp` `2D`, `st2.comp` `3D`,
 # `st7.comp` (image2DArray) `ARRAY2D`, `st8.comp` (uimageBuffer) `BUFFER`.
 # The lanes of the coordinate each reads are the dimension's.
 _STORAGE_DIM = {(Dim.Dim1D, 0): ("1D", 0x1), (Dim.Dim2D, 0): ("2D", 0x3),
@@ -122,7 +138,7 @@ _LOAD_FORM = {ImageFormat.Rgba32f: (".F32X4", 4, 6),
               ImageFormat.Rgba8Snorm: (".U32", 1, 12)}
 
 # The unpack a packed format's load is followed by, as statements of their
-# own (`g2s_trace_fold` on `ld_rgba8.frag`, notes/111).
+# own (`g2s_trace_fold` on `0000_ld_rgba8.frag`, notes/111).
 _UNPACK = {ImageFormat.Rgba8: "rgba8", ImageFormat.Rgba8ui: "bfe8",
            ImageFormat.Rgba8i: "bfe8", ImageFormat.Rgba16ui: "bfe16",
            ImageFormat.Rgba16f: "half", ImageFormat.Rg16f: "half",
@@ -156,7 +172,7 @@ class ImageOps(object):
         `{1, 2, 0, 0}`).  THE STORE IS A VALUE: the compiler's node (opcode
         0x1ba, `g2s_trace_fold`) has a register, and two MOVs read it, each
         stored into a temp of its own -- the whole value at the texel's type
-        and `.x` as `.U` (`si_a.comp`: `MOV.U R0.x, R1; MOV.F R0, R1;`, R1
+        and `.x` as `.U` (`0110_si_a.comp`: `MOV.U R0.x, R1; MOV.F R0, R1;`, R1
         never written; `st2.comp` `MOV.S R0, R1`).  The printed line has no
         destination; the internal one carries the store's vreg first, and the
         body's final render drops it (finish.py)."""
@@ -270,7 +286,7 @@ class ImageOps(object):
         _t1 = self._fresh()
         if not ENV.get("G2S_LOADIMTEMPLATE"):
             # ... and a NAME the statement stores (its 0x3a), walked by pass
-            # 1 among the block's names at the load's statement: `hl_c.comp`
+            # 1 among the block's names at the load's statement: `0111_hl_c.comp`
             # lists it after the local's store and the value's flush, all
             # three MOVs of the load seq 4 (`tools/gsum.py`, 0.7 .. 0.9)
             self.stmtpos[_t1] = _tie[0]
@@ -326,7 +342,7 @@ class ImageOps(object):
 
     def _unpack_fields(self, ins, _l, _code, _mv, fields):
         """AN INTEGER FORMAT UNPACKS BY BITFIELD EXTRACTS, one statement
-        each (`g2s_trace_fold` on `ld_rgba8ui.frag`: a BFE, op 0x1af, of
+        each (`g2s_trace_fold` on `0000_ld_rgba8ui.frag`: a BFE, op 0x1af, of
         the loaded word per lane, seq 6, 8, 10, 12, each stored), then the
         vector built of them, one statement (seq 13): `BFE.U R0.x, {8, 0,
         0, 0}, R4; .. BFE.U R3.x, {8, 24, 0, 0}, R4;  MOV.U R5.w, R3.x; ..
@@ -348,7 +364,7 @@ class ImageOps(object):
 
     def _unpack_snorm8(self, ins, _l):
         """RGBA8_SNORM (`g2s_trace_fold` / `tools/nodedump.py` on
-        `ld_rgba8_snorm.frag`): the word's lane x into a temp (`MOV.U R1.x,
+        `0000_ld_rgba8_snorm.frag`): the word's lane x into a temp (`MOV.U R1.x,
         R4;`, seq 5, stored); per lane a signed BFE of it (seq 7, 11, 18,
         25, stored) and its store into ONE int vector, a local's component
         store pair each -- the copy `MOV.S R0.yzw, R0;` and the write
@@ -408,7 +424,7 @@ class ImageOps(object):
 
     def _unpack_r11g11b10(self, ins, _l):
         """R11F_G11F_B10F (`g2s_trace_fold` / `tools/nodedump.py` on
-        `ld_r11f_g11f_b10f.frag`): per field, its BFE (seq 6, 11, 16,
+        `0000_ld_r11f_g11f_b10f.frag`): per field, its BFE (seq 6, 11, 16,
         stored), the shift into a float's exponent position (`SHL.U R5.x,
         R0, {17, 0, 0, 0}.x;`, seq 7, 12, 17, not stored) and that as a float
         (`MOV.F R5.x, R5;`, seq 9, 14, 19, stored); then one statement, the
@@ -449,7 +465,7 @@ class ImageOps(object):
 
     def _unpack_rgb10a2(self, ins, _l):
         """RGB10_A2 (`g2s_trace_fold` / `tools/nodedump.py` on
-        `ld_rgb10_a2.frag`): the four fields by BFE, one statement each
+        `0000_ld_rgb10_a2.frag`): the four fields by BFE, one statement each
         (seq 6 .. 12, stored); then ONE statement, the fields as floats
         divided by their maxima -- the reciprocals of `{1023, 1023, 1023,
         3}` one per lane into one register and the MUL (seq 13), the
@@ -552,7 +568,7 @@ class ImageOps(object):
 
     def _unpack_rgba8(self, ins, _l, _mvu, _mvf):
         """RGBA8 (unorm) UNPACKS AS FOUR STATEMENTS after the load's
-        (`g2s_trace_fold` on `ld_rgba8.frag`, `tools/nodedump.py`): the
+        (`g2s_trace_fold` on `0000_ld_rgba8.frag`, `tools/nodedump.py`): the
         word's lane x into a temp, `MOV.U R0.x, R1;` (seq 5, not stored);
         that as a float, `MOV.F R0.x, R0;` (seq 6, stored); the unpack into
         a SHORT register, `UP4UB.F H0, R0.x;` (seq 7, stored); and the
@@ -577,10 +593,10 @@ class ImageOps(object):
         """A storage image op's handle.  THE OTHER STORAGE-IMAGE LOADS STILL
         PENDING are loaded first, each at its own OpLoad's place (notes/111):
         an image op is a memory access, and a load of an image made before it
-        is not carried past it -- `si_b.comp`'s `OpLoad img; OpLoad src;
+        is not carried past it -- `0110_si_b.comp`'s `OpLoad img; OpLoad src;
         imageRead(src); imageWrite(img)` makes `img`'s handle at seq 2,
         stored into a temp (`g2s_trace_fold`), and prints it D0 against
-        `src`'s D1, where a texture sample between (`hl_a.frag`) leaves the
+        `src`'s D1, where a texture sample between (`0111_hl_a.frag`) leaves the
         handle to the store (seq 11).  `G2S_NOIMGPENDING=1` loads every
         handle at its use."""
         if not ENV.get("G2S_NOIMGPENDING"):
@@ -604,7 +620,7 @@ class ImageOps(object):
         it, in statement order, and a load substituted into the store's
         operands after it, coordinate then texel (the node's operand order)
         -- `g2s_trace_fold`: `st6.frag`'s TRUNC seq 1, the handle 4;
-        `hl_a.frag`'s TEX 9, the handle 11; `hl_b.comp`'s handle 2, the
+        `0111_hl_a.frag`'s TEX 9, the handle 11; `0111_hl_b.comp`'s handle 2, the
         texel's LDB 5 (pass 1 lists the reverse, `tools/gsum.py`).
         `G2S_STOREIMFIXED=1` drops the tag."""
         if ENV.get("G2S_STOREIMFIXED"):
@@ -648,7 +664,7 @@ class ImageOps(object):
     def _arm_sampled_image(self, ins):
         """A SEPARATE TEXTURE AND SAMPLER (Vulkan GLSL's `sampler2D(T, S)`):
         the pair is recorded and the image op loads BOTH handles and ORs them
-        into one (`ps_a.frag`: `LDC.U64 D1.x, buf14[1352]; LDC.U64 D0.x,
+        into one (`0083_ps_a.frag`: `LDC.U64 D1.x, buf14[1352]; LDC.U64 D0.x,
         buf14[328]; OR.S D0.x, D0, D1;` then `TEX.F .., handle(D0.x),
         2D;`)."""
         if ins.opcode != Op.OpSampledImage:
@@ -695,8 +711,14 @@ class ImageOps(object):
                               and _image_dim(module, self.samplers[args[0]])
                               == "BUFFER")
         coord = self._coordinate(args, _lod)
-        if coord is None or args[0] not in self.samplers:
-            raise NotEstablished("an image op whose operands have no form")
+        # TWO CONDITIONS, TWO MESSAGES.  These were one string, and the
+        # corpus's largest prefix-only bucket was that string -- which said
+        # nothing about which of them it was (notes/114 §78).
+        if args[0] not in self.samplers:
+            raise NotEstablished(
+                "an image op on a sampler this pass never bound")
+        if coord is None:
+            raise NotEstablished("an image op whose coordinate has no form")
         var = self.samplers[args[0]]
         _svar = None
         if isinstance(var, tuple):
@@ -709,14 +731,35 @@ class ImageOps(object):
             # a constant coordinate already carries the lod's zero in `.w`
             coord = self._lod_coordinate(args, coord, dim, _lod)
         # A SPIR-V value, so a named temp stored in its block: a band record,
-        # live to the block's end (`ps_b.frag`: the ADD of two samples
+        # live to the block's end (`0083_ps_b.frag`: the ADD of two samples
         # interferes with both in the compiler's graph)
         dst = (self._fresh(True) if not ENV.get("G2S_TEXNOBAND")
                else self._fresh())
-        self.lines.append("%s %s, %s, handle(%s.x), %s;"
-                          % (_mn, dst, coord, d, dim))
+        self.lines.append("%s %s, %s, handle(%s.x)%s, %s%s;"
+                          % (_mn, dst, coord, d,
+                             self._gather_component(op, args), dim,
+                             "" if self._img_offset is None
+                             else ", offset(%s)" % self._img_offset))
         self.values[ins.result] = dst
         return True
+
+    def _gather_component(self, op, args):
+        """The component suffix a gather puts on its handle, "" otherwise.
+
+        The corpus's `TXG` lines carry `handle(D0.x)`, `handle(D0.x).y` and
+        `handle(D0.x).z` -- `OpImageGather`'s Component operand, which is a
+        constant id, with 0 printing bare as every lane-x operand does."""
+        if op != Op.OpImageGather:
+            return ""
+        _c = self.module.constants.get(args[2])
+        if _c is None:
+            raise NotEstablished(
+                "a gather whose component is not a constant: not measured")
+        _v = _c.args()[-1]
+        if not 0 <= _v < 4:
+            raise NotEstablished(
+                "a gather component outside x..w: not measured")
+        return "" if _v == 0 else ".%s" % _COMPONENTS[_v]
 
     def _arm_image_query(self, ins):
         """`TXQ` -- the size and the level count of an image.
@@ -745,10 +788,13 @@ class ImageOps(object):
         reason: neither appears with a listing to read them from.
 
         `G2S_NOIMAGEQUERY=1` turns the arm off, which puts the refusal this
-        replaced back -- `probes/tq_a.frag` and `probes/tq_b.frag` then stop
+        replaced back -- `probes/0114_tq_a.frag` and `probes/0114_tq_b.frag` then stop
         instead of matching.
         """
         op = ins.opcode
+        if (op == Op.OpImageQuerySize
+                and not ENV.get("G2S_NOIMAGEQUERYSIZE")):
+            return self._image_query_size(ins)
         if op not in (Op.OpImageQuerySizeLod, Op.OpImageQueryLevels):
             return False
         if ENV.get("G2S_NOIMAGEQUERY"):
@@ -777,10 +823,36 @@ class ImageOps(object):
             self.comps[ins.result] = (3,) * 4
         return True
 
+    def _image_query_size(self, ins):
+        """`IMQ` -- the size of a STORAGE image (notes/114 \u00a757).
+
+        `OpImageQuerySize` is not `OpImageQuerySizeLod` and does not print
+        `TXQ`: `probes/0114_qs_a.comp` (`imageSize` of an `image3D`) gives
+
+            LDC.U64 D0.x, buf14[256];
+            IMQ   R0, handle(D0.x), 3D;
+
+        -- three operands, no `{0, 0, 0, 0}` and no lod, and the same bare
+        mnemonic with no type suffix that `TXQ` has.  The handle load is the
+        storage-image one the sample path already emits.
+        `G2S_NOIMAGEQUERYSIZE=1` refuses it again."""
+        var, _svar = self._sampler_of(ins.args()[0])
+        dim = _image_dim(self.module, var)
+        if dim is None:
+            raise NotEstablished("an image type with no dimension keyword")
+        self._computation()
+        d = self._load_handles(var, _svar)
+        dst = (self._fresh(True) if not ENV.get("G2S_TEXNOBAND")
+               else self._fresh())
+        self.lines.append(_emit("IMQ", dst, "handle(%s.x)" % d, dim))
+        self.values[ins.result] = dst
+        return True
+
     def _sampler_of(self, sid):
         """(texture variable, separate sampler variable or None)."""
         if sid not in self.samplers:
-            raise NotEstablished("an image op whose operands have no form")
+            raise NotEstablished(
+                "an image query on a sampler this pass never bound")
         var = self.samplers[sid]
         return var if isinstance(var, tuple) else (var, None)
 
@@ -797,10 +869,23 @@ class ImageOps(object):
             MOV.F R2.x, fragment.attrib[0].w;  ..  MOV.F R0.x, fragment.attrib[0];
             LDC.U64 D0.x, buf14[0];
             TEX.F R1, R0, handle(D0.x), SHADOWARRAY2D;
-            MOV.F result_color0, R1.x;          (`sa_a.frag`)"""
+            MOV.F result_color0, R1.x;          (`0099_sa_a.frag`)"""
         module = self.module
         args = ins.args()
-        if len(args) != 3:
+        _lod = None
+        if (ins.opcode == Op.OpImageSampleDrefExplicitLod
+                and len(args) == 5 and args[3] == 2
+                and not ENV.get("G2S_NOSHADOWLOD")):
+            # A SHADOW SAMPLE AT AN EXPLICIT LOD (notes/114 \u00a763): the two
+            # mechanisms compose and neither is new.  The reference rides in
+            # the coordinate as it does for the implicit form, and the lod
+            # rides in the coordinate's `.w` as it does for every other
+            # `TXL` -- `0114_sd_a.frag` prints `MOV.F R0.w, {0, 0, 0, 0}.x;`
+            # beside the rebuilt `.z` and then
+            # `TXL.F R2, R0, handle(D0.x), SHADOW2D;`.  Operand mask 2 is
+            # `Lod` alone; any other mask keeps the refusal below.
+            _lod = args[4]
+        elif len(args) != 3:
             raise NotEstablished(
                 "a shadow sample with image operands: not measured")
         coord, dref = args[1], args[2]
@@ -824,25 +909,50 @@ class ImageOps(object):
             raise NotEstablished(
                 "a coordinate MOV the image's tables do not name")
         # the rebuilt coordinate is a BAND temp, live to the block's end:
-        # the TEX's result does not take its register (`sa_a.frag`: `TEX.F
-        # R1, R0, ..`), as the texture result is one (`ps_b.frag`)
+        # the TEX's result does not take its register (`0099_sa_a.frag`: `TEX.F
+        # R1, R0, ..`), as the texture result is one (`0083_ps_b.frag`)
         # A SEPARATE SAMPLER's handles and their OR are the sampled image's
-        # expression, made before the coordinate is rebuilt (`sa_b.frag`: the
+        # expression, made before the coordinate is rebuilt (`0099_sa_b.frag`: the
         # OR is seq 9, the rebuild 14..18); a combined sampler's handle load
-        # is no node of the list and follows the rebuild (`sa_a.frag`).
+        # is no node of the list and follows the rebuild (`0099_sa_a.frag`).
         d = self._load_handles(var, _svar) if _svar is not None else None
-        coord_reg, _h = self._assemble(self._coordinate_lanes(coord, n),
-                                       _cmov, is_band=True,
-                                       gather_all=True)
+        _lanes = self._coordinate_lanes(coord, n)
+        _lod_operand = None
+        if _lod is not None:
+            if n > 3:
+                # AN ARRAYED SHADOW COORDINATE USES ALL FOUR COMPONENTS, so
+                # the lod cannot ride in one -- and the compiler gives it an
+                # OPERAND OF ITS OWN, between the coordinate and the handle:
+                # `compute_volumefog_injection.comp` prints
+                #   TXL.F R10, R9, {0, 0, 0, 0}, handle(D0.x), SHADOWARRAY2D;
+                # against the three-component form's
+                #   TXL.F R2, R2, handle(D0.x), 3D;
+                # (notes/120 §3)
+                _lod_operand = self._lod_lane(_lod)
+                if _lod_operand is None or _lod_operand[0] is not None:
+                    raise NotEstablished(
+                        "an arrayed shadow sample whose lod is not a "
+                        "constant: only the constant form is in a listing")
+                _lod_operand = _lod_operand[1]
+            else:
+                _lanes = _lanes + [None] * (3 - n) + [self._lod_lane(_lod)]
+        coord_reg, _h = self._assemble(_lanes, _cmov, is_band=True,
+                                       gather_all=True,
+                                       nogather=(3,) if (_lod is not None
+                                                         and _lod_operand
+                                                         is None)
+                                       else ())
         if d is None:
             d = self._load_handles(var, _svar)
         dst = self._fresh(True)
         if not ENV.get("G2S_SHADOWSTMT"):
             # the value's own line is the TEX: a store of it takes the TEX's
-            # `node[36]`, not the rebuilt coordinate's (`sa_b.frag`)
+            # `node[36]`, not the rebuilt coordinate's (`0099_sa_b.frag`)
             self.defline[ins.result] = len(self.lines)
-        self.lines.append("%s %s, %s, handle(%s.x), %s;"
-                          % (_mn, dst, coord_reg, d, dim))
+        self.lines.append("%s %s, %s, %shandle(%s.x), %s;"
+                          % (_mn, dst, coord_reg,
+                             "" if _lod_operand is None
+                             else "%s, " % _lod_operand, d, dim))
         self.values[ins.result] = dst
         self.comps[ins.result] = (0, 0, 0, 0)
         self.scalar.add(ins.result)
@@ -850,7 +960,7 @@ class ImageOps(object):
 
     def _coordinate_lanes(self, coord, n):
         """The first `n` components of a coordinate as `_assemble` entries:
-        a construct of this block gives its own sources (`sa_b.frag`'s
+        a construct of this block gives its own sources (`0099_sa_b.frag`'s
         `txVec0 = vec4(u_xlat0.xy, 2.0, u_xlat0.z)`: `R1`, `R1.y`, the
         constant, `R1.z`), anything else its register or input at each
         selected component."""
@@ -875,10 +985,43 @@ class ImageOps(object):
         handle load is created before it (seq 2 against the construct's
         3/5)."""
         self._lod_id = None
+        self._img_offset = None
         if len(args) == 4 and op in _LOD_OPS and args[2] == ImageOperands.Lod:
             self._lod_id = args[3]
             return self._lod_lane(args[3])
-        if len(args) != 2:
+        # A CONSTANT OFFSET RIDES AT THE END OF THE LINE, after the target
+        # keyword: `post_fxaa_opaque.frag` prints `TXL.F R2, R1,
+        # handle(D0.x), 2D, offset({1, 0, 0, 0});` for a `textureLodOffset`
+        # -- SPIR-V mask 0x0a, Lod | ConstOffset, five words.  The offset is
+        # a vec2 constant and prints padded to four, as every constant
+        # operand does.  (notes/120 §2)
+        if (len(args) == 5 and op in _LOD_OPS
+                and args[2] == (ImageOperands.Lod
+                                | ImageOperands.ConstOffset)):
+            self._lod_id = args[3]
+            _off = _constant_source(self.module, args[4], 4)
+            if _off is None:
+                raise NotEstablished(
+                    "an image offset that is not a constant: not measured")
+            self._img_offset = _off
+            return self._lod_lane(args[3])
+        # THE OFFSET ALONE, with no lod: `post_tonemap_3.frag` prints
+        # `TEX.F R8, {0.5, 0.5, 0, 0}, handle(D0.x), 2D, offset({0, 0, 0,
+        # 0});` for a `textureOffset` -- mask 0x08, four words, and the
+        # coordinate is NOT rebuilt in a register because there is no lod
+        # to put in `.w`.
+        if len(args) == 4 and args[2] == ImageOperands.ConstOffset:
+            _off = _constant_source(self.module, args[3], 4)
+            if _off is None:
+                raise NotEstablished(
+                    "an image offset that is not a constant: not measured")
+            self._img_offset = _off
+            return None
+        # A GATHER'S COMPONENT IS A REQUIRED OPERAND, not an extra one: its
+        # base form is three words, and it is the handle's suffix, not an
+        # ImageOperands mask (notes/120 §1).
+        _base = 3 if op == Op.OpImageGather else 2
+        if len(args) != _base:
             raise NotEstablished(
                 "an image op with extra operands: the coordinate is built in "
                 "a register and the handle load lands inside that "
@@ -889,9 +1032,9 @@ class ImageOps(object):
         """The lod as the construct's `.w` entry (`_assemble`'s form).
 
         A CONSTANT is its one-component text (`MOV.F R0.w, {1, 0, 0, 0}.x;`,
-        `fr_texlod.frag`).  A VALUE is written like any other component of
+        `0033_fr_texlod.frag`).  A VALUE is written like any other component of
         the construct, from its register or input at its selected component:
-        `tl_a.frag` (an input) `MOV.F R0.w, fragment.attrib[1].x;`, `tl_b`
+        `0094_tl_a.frag` (an input) `MOV.F R0.w, fragment.attrib[1].x;`, `tl_b`
         (a product) `MOV.F R1.w, R0.x;`, `tl_c` (a uniform member) `MOV.F
         R0.w, R1.x;` after its LDC, `tl_d` (a private local, the corpus's
         HLSLcc shape) `MOV.F R0.w, R1.x;` from the local's register."""
@@ -909,7 +1052,7 @@ class ImageOps(object):
         if (coord is None and _lod is None and args[1] in module.constants
                 and getattr(self, "_buffer_fetch", False)):
             # A BUFFER FETCH's constant texel index prints padded, no
-            # selector (`si_e.comp`: `TXF.F R3, {1, 0, 0, 0}, handle(D1.x),
+            # selector (`0110_si_e.comp`: `TXF.F R3, {1, 0, 0, 0}, handle(D1.x),
             # BUFFER;`)
             return _constant_source(module, args[1], 1)
         if (coord is None and args[1] in module.constants
@@ -975,7 +1118,7 @@ class ImageOps(object):
         (notes/83: `OR.S D0.x, D0, D1;`).
 
         A HANDLE LOAD IS ONE NODE PER LOCATION PER BLOCK, as every block
-        load is (notes/75, notes/104): `hd_c.frag` samples `sampler2D(T, S)`
+        load is (notes/75, notes/104): `0104_hd_c.frag` samples `sampler2D(T, S)`
         twice and prints the two LDCs once and the OR twice (`OR.S D0.x,
         D1, D2; OR.S D1.x, D1, D2;`) -- the OR is each `OpSampledImage`'s
         own node, so it defines a D of its own rather than overwriting the
@@ -994,7 +1137,7 @@ class ImageOps(object):
             self.lines.append(_emit(_HANDLE_OR, "%s.x" % _do, d, _ds))
             # EACH HANDLE LOAD IS MADE AFTER THE OR, IN THE OR'S OPERAND
             # ORDER, like any load substituted into a statement (notes/87):
-            # `ps_a.frag`'s OR is `node[36]` 1 and its two loads 3 and 5,
+            # `0083_ps_a.frag`'s OR is `node[36]` 1 and its two loads 3 and 5,
             # `map_87cc6750.frag`'s 52 and 54, 56 (`tools/gsum.py`) -- the
             # texture's first.  Tied to one stamp the pair's order falls to
             # pass 1's list, which reverses it where the loads are far
@@ -1031,12 +1174,12 @@ class ImageOps(object):
         """The coordinate built in a register with the lod in `.w`."""
         module = self.module
         _cd = module.result_insn.get(args[1])
-        # A 3D COORDINATE is the same construct with a third lane: `t3_a.frag`
+        # A 3D COORDINATE is the same construct with a third lane: `0000_t3_a.frag`
         # (`textureLod(sampler3D, u_xlat0, 0.0)`, `u_xlat0` a vec3) prints
         # `MOV.F R0.w, {0,..}.x; MOV.F R0.x, R1.y; MOV.F R2.x, R1.z; .. MOV.F
         # R0.z, R2.x; MOV.F R0.y, R0.x; .. MOV.F R0.x, R1;` then `TXL.F R0,
         # R0, handle(D0.x), 3D;` -- `t3_b` with a stored lane and an input
-        # ... and a CUBE direction is the same three lanes (`cu_a.frag`:
+        # ... and a CUBE direction is the same three lanes (`0109_cu_a.frag`:
         # `MOV.F R0.w, {0,..}.x; MOV.F R0.z, R1.x; .. TXL.F R0, R0,
         # handle(D0.x), CUBE;`)
         _n = ({"2D": 2, "3D": 3, "CUBE": 3}.get(dim)
@@ -1062,7 +1205,7 @@ class ImageOps(object):
             if _k in _spl:
                 # A LANE STORED IN THIS BLOCK is read from its stored value,
                 # as a construct's gather reads it (`_flatten_operands`,
-                # notes/90): `tl_e.frag`'s `textureLod(.., u_xlat3.xy, 0.0)`
+                # notes/90): `0106_tl_e.frag`'s `textureLod(.., u_xlat3.xy, 0.0)`
                 # right after `u_xlat3.y = m.y` (a block of its own after
                 # `u_xlat3.x = m.x`) builds the coordinate's `.y` from `m.y`
                 # -- `MOV.F R0.x, R0.y; .. MOV.F R1.y, R0.x;` -- and `.x` from
@@ -1070,11 +1213,11 @@ class ImageOps(object):
                 _lanes[_k] = _spl[_k]
         # THE LOD IS A COMPONENT OF THE CONSTRUCT like any other: a component
         # of a VECTOR is a select (notes/104 §6, `_forces_gather`) and is
-        # gathered through a `.x` scratch -- `pg_b.frag`'s `textureLod(..,
+        # gathered through a `.x` scratch -- `0108_pg_b.frag`'s `textureLod(..,
         # u_xlat6.x)` right after `u_xlat6.x = max(..)` stored into the vec4
         # prints `MOV.F R2.x, R1; .. MOV.F R2.w, R2.x;` (the corpus's
         # `chr_cloth_a503f755`), where a scalar local's value goes straight in
-        # (`tl_d.frag`: `MOV.F R0.w, R1.x;`)
+        # (`0094_tl_d.frag`: `MOV.F R0.w, R1.x;`)
         _lid = getattr(self, "_lod_id", None)
         _force = (set([3]) if _lid is not None
                   and self._selects_vector_component(_lid)
@@ -1084,7 +1227,7 @@ class ImageOps(object):
         if _sk and not ENV.get("G2S_NOSPLITGATHER"):
             # A STORED LANE is a component of the local's vector, a select
             # into a lane other than x, and is gathered even when it is a
-            # constant: `pg_c.frag`'s `u_xlat7.y = 0.5; textureLod(..,
+            # constant: `0108_pg_c.frag`'s `u_xlat7.y = 0.5; textureLod(..,
             # u_xlat7.xy, 0.0)` prints `MOV.F R2.x, {0.5, 0, 0, 0};` .. `MOV.F
             # R2.y, R2.x;` (the corpus's `chr_cloth_5482bf36` and three more),
             # as the construct after it gathers the same lane

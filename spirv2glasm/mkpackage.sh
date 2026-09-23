@@ -5,7 +5,10 @@
 # one level up) and `spirv2glasm/`.  To keep it under 100 files, the big
 # folders travel as archives next to the code:
 #
-#   probes.7z  probes/ and listings/ (no SPIR-V) -- the workflow unpacks it
+#   probes.7z  probes/, listings/, listings_open/, opcov/ AND extcov/
+#              workflow unpacks it.  `listings_open/` is the oracle's
+#              listing for a probe whose rule is read but not yet
+#              implemented: evidence, not a gate, and it ships too
 #   tools.7z   tools/, all but tools/probecheck.py, which the workflow runs
 #              and so ships as a plain file
 #   notes.7z   notes/ (no SPIR-V)
@@ -20,7 +23,7 @@ stage=$(mktemp -d)
 trap 'rm -rf "$stage"' EXIT
 cd "$here"
 rm -f probes.7z tools.7z notes.7z
-7z a -t7z -mx=9 probes.7z probes listings -xr'!*.spv' > /dev/null
+7z a -t7z -mx=9 probes.7z probes listings listings_open opcov extcov glasmcov stress -xr'!*.spv' > /dev/null
 7z a -t7z -mx=9 tools.7z tools -xr'!__pycache__' -x'!tools/probecheck.py' > /dev/null
 7z a -t7z -mx=9 notes.7z notes -xr'!*.spv' > /dev/null
 mkdir -p "$stage/$name/tools" "$stage/.github"

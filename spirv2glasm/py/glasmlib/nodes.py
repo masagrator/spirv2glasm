@@ -29,8 +29,8 @@ MUL = Op.MUL
 SGE = Op.SGE
 SGT = Op.SGT
 SLT = Op.SLT
-OR = Op.OR                      # any()'s chain (`any_a.frag`)
-BFI = Op.BFI                   # bitfieldInsert (`bf_a.frag`'s DAG: 0x1b0)
+OR = Op.OR                      # any()'s chain (`0000_any_a.frag`)
+BFI = Op.BFI                   # bitfieldInsert (`0108_bf_a.frag`'s DAG: 0x1b0)
 TEX = Op.TEX_bc                 # the image instructions' opcodes, measured
 TXL = Op.TXL_b7                 # from the emit lists (notes/49)
 TXF = Op.TXF_b5
@@ -41,6 +41,8 @@ SHL = Op.SHL_9b                 # `SHL.U` of r11f_g11f_b10f's unpack (0x9b)
 UP2H = Op.UP2H
 UP2US = Op.UP2US
 BFE = Op.BFE                    # bitfieldExtract, the packed formats
+NOT = Op.NOT                    # `~x` (notes/114 §45: `0114_bn_a.frag`'s DAG
+                                # is one 0x77 of mask 0xffffffff)
 
 # The scalar ops f_7100060110 splits per component (0x6013c..0x60158:
 # `1 << (op - 0x66) & 0x2601011`): COS EX2 LG2 RCP RSQ SIN.

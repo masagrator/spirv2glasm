@@ -29,7 +29,7 @@ class _Body(object):
         Read since (notes/71): the printer (0xbdb4f8..0xbdb558) walks the
         register classes as bdcd60(.., 2, "SHORT ", "H") when the target has
         a short class, (.., 3, "", "R"), (.., 4, "LONG ", "D"), so a SHORT
-        temp (`lp_wcont.vert`'s continue flag) comes before the R list.
+        temp (`0071_lp_wcont.vert`'s continue flag) comes before the R list.
         """
         out = []
         if "H0" in self.wants:
@@ -39,7 +39,7 @@ class _Body(object):
             out.append("TEMP %s;" % ", ".join("R%d" % i
                                               for i in range(self.regs)))
         if "D0" in self.wants:
-            # one LONG register per handle loaded (`ps_b.frag`: two
+            # one LONG register per handle loaded (`0083_ps_b.frag`: two
             # texture/sampler pairs, `LONG TEMP D0, D1, D2, D3;`)
             out.append("LONG TEMP %s;" % ", ".join(
                 "D%d" % i for i in range(max(self.dregs, 1))))
@@ -48,7 +48,7 @@ class _Body(object):
             out.append("TEMP RC;")
             out.append("SHORT TEMP HC;")
         # LOCAL MEMORY LAST: the printer's `TEMP lmem%d[%d];` (0x1160842,
-        # 0xbdb718) follows the register classes -- `lm_icb.frag` prints it
+        # 0xbdb718) follows the register classes -- `0071_lm_icb.frag` prints it
         # after `TEMP T;`, `map_0b9eb2ac` after `SHORT TEMP HC;`.
         for k, n in enumerate(self.lmem):
             out.append("TEMP lmem%d[%d];" % (k, n))
@@ -58,7 +58,7 @@ class _Body(object):
         """`# N instructions, N R-regs[, N D-regs]`.
 
         `, %d D-regs` is appended only when a LONG register is in play --
-        `f03_tex.frag` prints `# 5 instructions, 1 R-regs, 1 D-regs` and every
+        `0030_f03_tex.frag` prints `# 5 instructions, 1 R-regs, 1 D-regs` and every
         probe without a sampler stops after the R count.  A subroutine's
         label is not an instruction (notes/68)."""
         t = "# %d instructions, %d R-regs" % (

@@ -523,6 +523,13 @@ class Module(object):
         An opcode with no handler in the relevant table reaches error 8001,
         "SPIR-V: Invalid %s", so this is a prediction of a real refusal rather
         than an opinion about the module.
+
+        IT OVER-PREDICTS ABOVE 400.  The tables `spvgrammar.py` carries are
+        the halfword tables only, and the dispatcher has explicit arms in
+        FRONT of them for a few NV/KHR/EXT opcodes; the oracle compiles
+        `OpSubgroupBallotKHR`, `OpGroupNonUniformPartitionNV` and
+        `OpDemoteToHelperInvocation`, which this reports as unhandled
+        (notes/133).  No corpus module contains one.
         """
         mod_bad, body_bad = [], []
         in_fn = False

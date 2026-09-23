@@ -72,7 +72,7 @@ class CompositeOps(object):
 
     def _extract_constant(self, ins, args):
         """A component of a CONSTANT is that scalar constant: the reader
-        folds the extract (`sc_cstore.frag`: `o.xyz = vec3(1.0)` stores `{1,
+        folds the extract (`0067_sc_cstore.frag`: `o.xyz = vec3(1.0)` stores `{1,
         0, 0, 0}` three times)."""
         _cc0 = self.module.constants.get(args[0])
         if (_cc0 is None or _cc0.opcode != Op.OpConstantComposite
@@ -92,7 +92,7 @@ class CompositeOps(object):
         args = ins.args()
         # the SAME NODE, not only the same id: loads of one location in one
         # block are one interned expression (`ldc_same`), so `vec4(s, s, s,
-        # s)` from four `OpLoad`s is a splat (`pu_a.vert`: `MUL.F32 R1,
+        # s)` from four `OpLoad`s is a splat (`0075_pu_a.vert`: `MUL.F32 R1,
         # vertex.attrib[0], R0.x;`)
         if len(set(args)) != 1 and len(set(
                 self.ldc_canon.get(_a, _a) for _a in args)) == 1:
@@ -108,7 +108,7 @@ class CompositeOps(object):
         if _tc == BOOL_TYPE_CODE and not ENV.get("G2S_NOBOOLCONSTRUCT"):
             # A BOOL IS HELD IN ITS REPRESENTATION by the time a MOV prints:
             # `f_7100030e20` retypes every bool-typed node (notes/64 §4), so a
-            # bool vector's construct writes are `MOV.U` (`sel_g.frag`)
+            # bool vector's construct writes are `MOV.U` (`0100_sel_g.frag`)
             _tc = _BOOL_REPR_CODE
         _mov = _opchain.mnemonic_for_opcode(nodes.MOV, _tc)
         if _mov is None or _mov.startswith("<"):
@@ -121,7 +121,7 @@ class CompositeOps(object):
         and its lowering is the node's swizzle.  Readers in the block take
         that swizzle forwarded (`MUL.F32 R1, vertex.attrib[0], R0.x;`) and
         the temp's own store is flushed like any temp's: `MOV.F R0, R0.x;` in
-        `pu_a.vert`, `MOV.F R1.xyz, R1.x;` in `chr_cloth_06b33827.vert`'s
+        `0075_pu_a.vert`, `MOV.F R1.xyz, R1.x;` in `chr_cloth_06b33827.vert`'s
         `vec3(b, b, b)`."""
         self._computation()
         _b0 = self.values.get(args[0])
@@ -141,11 +141,11 @@ class CompositeOps(object):
         self.stmtpos[_cn] = len(self.lines)
         # the flush carries the construct statement's `node[36]`: the
         # statement is made before the loads its operands lower to
-        # (`tools/gsum.py` on `pu_a.vert`: the flush seq 1, the LDC 3, the
+        # (`tools/gsum.py` on `0075_pu_a.vert`: the flush seq 1, the LDC 3, the
         # MUL 4)
         # -- and when the operands' load is an EARLIER statement's, interned
         # (one location per block), no load is made here and the statement
-        # sits where it is: `on_b.frag`'s second `vec3(c18, c18, c18)` flush
+        # sits where it is: `0106_on_b.frag`'s second `vec3(c18, c18, c18)` flush
         # is seq 25, before its MUL (26) and after the first statement (23),
         # where the shared LDC's line would put it with the first flush (18)
         _canon = self.ldc_canon.get(args[0], (args[0],))[0]
@@ -157,10 +157,15 @@ class CompositeOps(object):
         self.ties.append(_cg)
         self.flush_q.append((_cn, _mov, _cds, _cg, None, _b0 + ".x"))
         self.con_blk[ins.result] = self._bkey()
+        # THE TEMP'S NAME, for a read in a LATER block (notes/75, §94): in
+        # this block readers take the node's swizzle forwarded, but the
+        # construct's own flush writes `_cn` and that register is what a
+        # later block reads.
+        self.con_temp[ins.result] = _cn
 
     def _construct_gather(self, ins, args):
         """ONE WRITE PER COMPONENT INTO ONE VREG.  Read from the emit list of
-        `co_mix4.vert` (`vec4(a0.x, a1.y, a0.z, a1.w)`) and `co_mul4.vert`
+        `0052_co_mix4.vert` (`vec4(a0.x, a1.y, a0.z, a1.w)`) and `0053_co_mul4.vert`
         (four independent products): the construct makes ONE vreg whose four
         writes all carry the same `node[36]`, each writing one component
         mask, and a source component other than 0 is first copied into the
@@ -200,7 +205,7 @@ class CompositeOps(object):
         # When component 0 is a value computed in this block, the construct's
         # write of it and the store that forwards it become ready together
         # and the tie is decided by an edge the ALLOCATOR puts there --
-        # `co_add1.vert` and `co_mul4.vert` carry the same keys and come out
+        # `0052_co_add1.vert` and `0053_co_mul4.vert` carry the same keys and come out
         # in opposite orders, the difference being a write-after-write on the
         # register the construct shares with its `.y` gather.  Pass 2 builds
         # its edges on allocated registers (notes/57), so this is only
@@ -275,7 +280,7 @@ class CompositeOps(object):
         gathered even from `.x` (`map_110833a5`'s `vec4(uvScroll0_g.x, ..,
         uvScroll1_g.x, ..)`: `MOV.F R1.x, R1;` then `MOV.F R0.z, R1.x;`).
         The name's component read through a whole load -- an extract of the
-        load or of a shuffle of it -- is the same read (`fa_b.frag`'s
+        load or of a shuffle of it -- is the same read (`0101_fa_b.frag`'s
         `vec4(u_xlat2.xy, u_xlat1.xy)`: `MOV.F R1.x, R1;` then `MOV.F R1.z,
         R1.x;`, R1 being `u_xlat1`)."""
         if _a in self.lname and self.values.get(_a) == self.lname[_a][0]:
@@ -284,7 +289,7 @@ class CompositeOps(object):
                 and _a not in self.node_loads
                 and not ENV.get("G2S_NOSELECTGATHER")):
             # A COMPONENT OF A VECTOR is a select, not a scalar node, into
-            # any lane but x (notes/104 §6): `cl_c.frag`'s `vec4(w.x, t.x,
+            # any lane but x (notes/104 §6): `0104_cl_c.frag`'s `vec4(w.x, t.x,
             # ..)` prints `MOV.F R0.x, R2; .. MOV.F R0.y, R0.x;`, `cl_d`'s
             # attribute `w.x` and `cl_e`'s `u_xlat7.w` gather as well, even
             # where the lane forwards to a scalar the block stored
@@ -312,7 +317,7 @@ class CompositeOps(object):
             if (_w and _w > 1 and self.values.get(_a) is not None
                     and not ENV.get("G2S_NOSELECTGATHER")):
                 # every lane of a VECTOR operand is a component of it
-                # (`cl_f.frag`'s `vec4(s, t, 1.0)`, t a vec2: `MOV.F R1.x,
+                # (`0104_cl_f.frag`'s `vec4(s, t, 1.0)`, t a vec2: `MOV.F R1.x,
                 # R3; .. MOV.F R1.y, R1.x;`)
                 _force.update(range(len(flat), len(flat) + _w))
             _b = self.values.get(_a)
@@ -327,7 +332,7 @@ class CompositeOps(object):
             if _crd is not None:
                 # A COMPONENT OF A CONSTRUCT MADE IN THIS BLOCK reads that
                 # lane's source, as every other reader does (`_con_read`,
-                # notes/81 §3): `cc_d.frag`'s `vec4(f.x, f.y, 0.0, 1.0)`, f
+                # notes/81 §3): `0106_cc_d.frag`'s `vec4(f.x, f.y, 0.0, 1.0)`, f
                 # the bitcast built lane by lane (`MOV.F R16.y, R1.x; MOV.F
                 # R16.x, R0;`), prints `MOV.F R2.x, R1; MOV.F R2.y, R2.x;
                 # MOV.F R2.x, R0;` -- the gather kept, the source forwarded
@@ -346,15 +351,15 @@ class CompositeOps(object):
 
     def _construct_splat(self, ins, args):
         """A SPLAT emits nothing.  `vec4(dot(a, b))` is the dot's own
-        register read four times, and `op_dot.vert` shows the listing never
+        register read four times, and `0011_op_dot.vert` shows the listing never
         materialises the vector.
 
         THE READER MAKES THE SPLAT A SWIZZLE of the scalar's temp
-        (`g2s_trace_wstmt` on `sp_mul.frag`: `o = t.xxxx`, a cls-14 swizzle
+        (`g2s_trace_wstmt` on `0072_sp_mul.frag`: `o = t.xxxx`, a cls-14 swizzle
         over the variable node), and a variable read INSIDE a swizzle is not
         forwarded -- its node carries none of the forwarding marks a plain
         read has (`[56]`/`[72]` zero, against 0xf / 0xab0001 on
-        `sc_min.frag`'s `o.x = t`).  So the store reads the temp's NAME, the
+        `0067_sc_min.frag`'s `o.x = t`).  So the store reads the temp's NAME, the
         value has one use, it folds into the name, and there is no self-move
         after the store: `MUL.F32 R0.x, a, b; MOV.F result_color0, R0.x;`
         (notes/72)."""
@@ -381,7 +386,7 @@ class CompositeOps(object):
         0.5, 0.5}` in the multiply's operand slot.  BROADCAST, not a `.x`
         read: the splat's own width is the result's, where a one-component
         constant would print `{0.5, 0, 0, 0}.x`.  The literal has four slots
-        like every constant's, the ones past the width 0 (`cs_a.frag`'s
+        like every constant's, the ones past the width 0 (`0101_cs_a.frag`'s
         `vec3(1.0)` built in the body: `MIN.F R0.xyz, .., {1, 1, 1, 0};`)."""
         base = _constant_source(self.module, vid, 1)
         if base is None:
@@ -417,7 +422,7 @@ class CompositeOps(object):
                 set(_ls[x][0] for x in sel)) == 1:
             # EVERY SELECTED COMPONENT WAS STORED IN THIS BLOCK: the shuffle
             # reads the stored values, as a component read does (notes/69).
-            # `mc_n12.vert`'s `u_xlat8.xxx * u_xlat2.xyz`, right after
+            # `0080_mc_n12.vert`'s `u_xlat8.xxx * u_xlat2.xyz`, right after
             # `u_xlat8.x = inversesqrt(..)`, prints `MUL.F32 R2.xyz, R1.x,
             # R28;` -- R1 the RSQ, not `u_xlat8`.
             self.values[ins.result] = _ls[sel[0]][0]
@@ -468,7 +473,7 @@ class CompositeOps(object):
             # SOME selected components were stored in this block: a reader
             # that takes the shuffle a COMPONENT AT A TIME (a construct's
             # gather) reads those stored values and the name for the rest
-            # (notes/90).  `bl_259b.vert`'s `vec4(u_xlat4.xyz, ..)` right
+            # (notes/90).  `0000_bl_259b.vert`'s `vec4(u_xlat4.xyz, ..)` right
             # after `u_xlat4.z = ..` gathers `MOV.F R5.x, R2.z;` -- the DIV --
             # for `.z` and `R35.y`, `R35` (the name) for the others.
             self.lsplit[ins.result] = dict(

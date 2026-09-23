@@ -19,7 +19,7 @@ FClamp is lowered by the arithmetic arm (arith.py): both its results are
 band temps (notes/52 section 8).
 
 GLSL.std.450 Sqrt on a vector is lowered here as the measured thirteen-node
-shape of `un_sqrt.vert` (notes/60).
+shape of `0033_un_sqrt.vert` (notes/60).
 """
 import lex as _lex
 
@@ -39,14 +39,14 @@ _ZERO4 = "{0, 0, 0, 0}"
 # The one-instruction builtins whose constant operand prints second: the MIN
 # and MAX nodes (0x8e / 0x8d), whatever their type, are in the canonicaliser
 # f_710005f810's set (notes/102 §6; the builtin lowering writes the slots in
-# argument order, `mm_a.frag`, and that pass swaps them).
+# argument order, `0102_mm_a.frag`, and that pass swaps them).
 _CONSTANT_SECOND = (GLSL450.FMin, GLSL450.FMax, GLSL450.SMin, GLSL450.SMax,
                     GLSL450.UMin, GLSL450.UMax)
 _ONE = "{1, 0, 0, 0}"
 
 # The whole-vector shapes whose wiring is the function's own definition.
 _DEFINED_SHAPES = (GLSL450.Normalize, GLSL450.FMix, GLSL450.Step,
-                   GLSL450.FSign)
+                   GLSL450.FSign, GLSL450.Length, GLSL450.Distance)
 # The rounding class the `step` and `sign` TRUNC belongs to (notes/23).
 _ROUNDING = "0x6d"
 
@@ -130,7 +130,7 @@ class ExtInstOps(object):
         §3, notes/67 §9, notes/87): `t = abs(x)` is a statement whose carrier
         MOV takes the modified operand, and a carrier folds into its source
         only when the read has no modifier -- so every reader reads the MOV.
-        The cut `mq_n4.frag`'s `fract(abs(v.xy))` prints `MOV.F R16.xy, |R3|;
+        The cut `0000_mq_n4.frag`'s `fract(abs(v.xy))` prints `MOV.F R16.xy, |R3|;
         FRC.F32 R17.xy, R16;`, and no listing, probe or corpus, has `|..|` on
         anything but a MOV."""
         module = self.module
@@ -156,7 +156,7 @@ class ExtInstOps(object):
                                  "the image does not give")
         self._computation()
         # THE CARRIER CARRIES ITS SOURCE NODE'S `node[36]`: the modifier is
-        # set on the operand slot of the node it reads, and `mq_n4.frag`'s
+        # set on the operand slot of the node it reads, and `0000_mq_n4.frag`'s
         # `MOV.F R16.xy, |R3|;` is seq 16, the MUL's -- the read of
         # `u_xlat0` forwarded to the MUL stored into it in this block
         # (`tools/nodedump.py`)
@@ -164,13 +164,13 @@ class ExtInstOps(object):
         _mseq = self._merge_node_line(ops[0])
         if _mseq is not None:
             # the node read is a MERGE PAIR made in this block: the carrier
-            # is stamped with the pair's statement (`fa_b.frag`:
+            # is stamped with the pair's statement (`0101_fa_b.frag`:
             # `u_xlat0.xy = ..` then, after another statement, `abs(
             # u_xlat0.xy)` -- `MOV.F R3.xy, |R2|;` is seq 11, the pair's
             # pass-through, ahead of the statement between)
             # ... ONE `node[36]` with the pair: when the pair's halves share
             # one (the tie that holds the pass-through), the carrier joins
-            # that tie (`pw_a.frag`: pass-through, carrier and lane write all
+            # that tie (`0108_pw_a.frag`: pass-through, carrier and lane write all
             # seq 14)
             _pg = (None if ENV.get("G2S_ABSPAIRSEQ") else
                    next((_t for _t in self.ties if _mseq in _t
@@ -191,7 +191,7 @@ class ExtInstOps(object):
             _nm = self._name_read_key(ops[0])
             if _nm is not None and not ENV.get("G2S_NONAMEREADSEQ"):
                 # A READ OF A NAME is ONE node per block, made at the block's
-                # first read of it: `ac_a.frag`'s `abs(u_xlat3.x)` in two
+                # first read of it: `0108_ac_a.frag`'s `abs(u_xlat3.x)` in two
                 # statements of one block are both seq 16 -- the first
                 # statement's -- ahead of that statement's MUL (18); the
                 # third, after `u_xlat31`'s second store opened a block, is
@@ -202,7 +202,7 @@ class ExtInstOps(object):
         # THE OPERAND IS PRINTED WITH ITS SWIZZLE, as every other arm prints
         # its sources (`_source`): `forms` is built from `self.values` alone,
         # so a value whose lane lives in `self.comps` -- a load of a stored
-        # local component, `abs(u_xlat1.z)` in `ab_a.frag` -- lost it and
+        # local component, `abs(u_xlat1.z)` in `0105_ab_a.frag` -- lost it and
         # printed `|R4|` for the oracle's `|R4.z|`
         _opnd = (_source(self.values, self.comps, ops[0], _nres)
                  if ops[0] in self.values and not ENV.get("G2S_NOABSCOMP")
@@ -217,9 +217,24 @@ class ExtInstOps(object):
         that reads the local's NAME (its register, not a forwarded value),
         else None."""
         _cl = self.comp_load.get(vid)
-        if _cl is None:
-            return None
-        _reg = self.local_reg.get(_cl[0][0])
+        if _cl is not None:
+            _var = _cl[0][0]
+        else:
+            # A WHOLE LOAD READS THE SAME NAME.  The rule above was measured
+            # on a COMPONENT load (`0108_ac_a.frag`'s `abs(u_xlat3.x)`), but what
+            # it is about is the READ OF THE NAME, not the lane: the corpus's
+            # `chr_hair_e9f8d2b0.frag` has four `abs()` of one local's whole
+            # load in one block, and the compiler's `stamps` gives the first
+            # two ONE `node[36]` (1657) where ours took each line's own --
+            # which is the pick the block differs on (SS76).
+            # `G2S_NOWHOLENAMEREAD=1` off.
+            if ENV.get("G2S_NOWHOLENAMEREAD"):
+                return None
+            _d = self.module.result_insn.get(vid)
+            if _d is None or _d.opcode != Op.OpLoad:
+                return None
+            _var = _d.args()[0]
+        _reg = self.local_reg.get(_var)
         if _reg is None or self.values.get(vid) != _reg:
             return None
         return (self._bkey(), _reg)
@@ -261,7 +276,7 @@ class ExtInstOps(object):
                 and not ENV.get("G2S_NOABSCOMPSEQ")
                 and self.values.get(_ld) == self.local_reg.get(_cl[0][0])):
             # A COMPONENT READ OF THE MERGED LOCAL is a select on the pair's
-            # node too: `ab_a.frag`'s `abs(u_xlat1.y)` and `abs(u_xlat1.z)`
+            # node too: `0105_ab_a.frag`'s `abs(u_xlat1.y)` and `abs(u_xlat1.z)`
             # after the lane stores both print seq 21, the last pair's
             # pass-through `MOV.F R4.xyz, R4;` (`tools/nodedump.py`).  A read
             # forwarded to the stored value (`cfw`) reads another node.
@@ -271,7 +286,7 @@ class ExtInstOps(object):
                 and self.cfw_kind.get(tuple(_cl[0])) == "merge"
                 and self.cfw.get(_cl[0][0], {}).get(_cl[0][1], (None,))[0]
                 == self._bkey()):
-            # ... AND SO IS A READ FORWARDED FROM A PAIR'S LANE: `pw_a.frag`'s
+            # ... AND SO IS A READ FORWARDED FROM A PAIR'S LANE: `0108_pw_a.frag`'s
             # `u_xlat7.x = u_xlat19.x * u_xlat7.x; .. log2(abs(u_xlat7.x))`
             # prints `MOV.F R2.x, |R1|;` -- the MUL's register -- at seq 14,
             # the pair's (`MOV.F R4.yzw, R4;` and `MOV.F R4.x, R1;`), not the
@@ -290,12 +305,12 @@ class ExtInstOps(object):
 
     def _single(self, ins, _single, forms):
         """THE WRITE MASK IS THE RESULT'S COMPONENT COUNT (notes/41), as for
-        every other instruction: `sc_min.frag` prints `MIN.F R0.x,
+        every other instruction: `0067_sc_min.frag` prints `MIN.F R0.x,
         fragment.attrib[0], {1, 0, 0, 0};` for a scalar min.  A vec4 gives
         the empty suffix.
 
         EACH OPERAND WITH ITS SELECTOR, as a binary op's: the raw form drops
-        a swizzle -- `bl_277.vert`'s `max(u_xlat1.xyw, vec3(0.0))` prints
+        a swizzle -- `0000_bl_277.vert`'s `max(u_xlat1.xyw, vec3(0.0))` prints
         `MAX.F R1.xyz, R36.xyww, {0, 0, 0, 0};` -- and a one-component value
         read by a wider op broadcasts through `.x`."""
         module = self.module
@@ -320,7 +335,7 @@ class ExtInstOps(object):
               and not _sforms[1].startswith("{")
               and not ENV.get("G2S_NOCONSTSECOND")):
             # A CONSTANT GOES SECOND in the commutative MIN and MAX, as in the
-            # clamp's pair (notes/90 §2): `mm_a.frag`'s `max(1.0, a.x)`
+            # clamp's pair (notes/90 §2): `0102_mm_a.frag`'s `max(1.0, a.x)`
             # prints `MAX.F R1.x, fragment.attrib[0], {1, 0, 0, 0};`, a vec2
             # `max(vec2(..), a.zw)` the same
             _sforms.reverse()
@@ -427,7 +442,7 @@ class ExtInstOps(object):
         with mask `0xff` -- one instruction per component, each into a vreg
         of its OWN -- followed by the composite construct's four writes.  The
         `0x47`s are not this arm's to emit: `_assemble` is the construct,
-        read from `co_mul4.vert`, and the store then forwards component 0
+        read from `0053_co_mul4.vert`, and the store then forwards component 0
         exactly as it does there.
 
         The ORDER is the scheduler's: the four carry ONE `node[36]`, so they
@@ -438,8 +453,8 @@ class ExtInstOps(object):
         _n = _components(module, ins.result_type)
         # FEWER THAN FOUR LANES, and operands read through a selector, are
         # the same shape, one instruction per lane at the lane's component:
-        # `sn_b.frag`'s `sin(u_xlat2.xyz)` prints `SIN.F32 R0.x, R3.x; ..
-        # R3.y; .. R3.z;` and the three-lane construct, `sn_c.frag`'s
+        # `0109_sn_b.frag`'s `sin(u_xlat2.xyz)` prints `SIN.F32 R0.x, R3.x; ..
+        # R3.y; .. R3.z;` and the three-lane construct, `0109_sn_c.frag`'s
         # `sin(a.zw)` `SIN.F32 .., fragment.attrib[0].z` / `.w`
         # THE DEFAULT since notes/109 §5: `sn_b`'s copy register was the
         # flushed name's band record, and the corpus's four `sin` files
@@ -486,13 +501,13 @@ class ExtInstOps(object):
             self.ties.append(_tie)
         elif not ENV.get("G2S_SCALARGROUP"):
             # ... and the value's statement -- the construct, its store and
-            # flushes -- starts at the construct (`sn_b.frag`: the SINs 4, 5,
+            # flushes -- starts at the construct (`0109_sn_b.frag`: the SINs 4, 5,
             # 6, the construct's writes and `t`'s stores 7), as `fwidth`'s
             # does at its ADD
             self.defline[ins.result] = len(self.lines)
         # THE CONSTRUCT IS THE VALUE'S BAND TEMP (notes/110 §4): the
         # compiler numbers it with the front end's names, after the lanes
-        # it assembles and before the next value's -- `sn_c.frag`'s
+        # it assembles and before the next value's -- `0109_sn_c.frag`'s
         # `vec4(sin(a.zw), cos(a.yx))` has the liveset seed `1 .. 8` with
         # the SIN pair record 4 (after the SINs' 2, 3) and the COS pair 7
         # (after 5, 6), both live out of the block.  `sy_a`, `sy_d` need it.
@@ -518,8 +533,10 @@ class ExtInstOps(object):
         Each takes a REGISTER of its own -- `un_normalize` uses R0, R1, R2
         for the three -- so every temp is a band temp."""
         module = self.module
+        _scalar_result = which in (GLSL450.Length, GLSL450.Distance)
         if not (which in _DEFINED_SHAPES and _sh is not None
-                and _components(module, ins.result_type) == 4
+                and (_scalar_result
+                     or _components(module, ins.result_type) == 4)
                 and not any(f.startswith(_MODIFIED)
                             or _lex.has_swizzle_suffix(f) for f in forms)):
             return False
@@ -533,6 +550,12 @@ class ExtInstOps(object):
             raise NotEstablished(
                 "GLSL.std.450 %d: the image's tables do not name one of its "
                 "opcodes for this type" % which)
+        if which == GLSL450.Length and len(forms) == 1:
+            self._length(ins, forms[0], _tc, _rsq)
+            return True
+        if which == GLSL450.Distance and len(forms) == 2:
+            self._distance(ins, forms, _tc, _add, _rsq)
+            return True
         if which == GLSL450.Normalize and len(forms) == 1:
             self._normalize(ins, forms[0], _dp, _rsq, _mul)
             return True
@@ -547,6 +570,63 @@ class ExtInstOps(object):
             self._mix(ins, forms, _add, _mul)
             return True
         return False
+
+    def _length(self, ins, v, _tc, _rsq, _sub=None):
+        """`length(v)` IS INLINED as a dot, a reciprocal square root and a
+        RECIPROCAL (notes/114 \u00a749).  `extshape.py` measures 0x89 (`DP3`),
+        0x7c (`RSQ`) and 0x87 (`DIV`), each mask `.x`, and `probes/0108_ds_b.vert`
+        prints them:
+
+            DP3.F32 R0.x, vertex.attrib[0], vertex.attrib[0];
+            RSQ.F32 R1.x, R0.x;
+            DIV.F32 R2.x, {1, 0, 0, 0}, R1.x;
+
+        so the square root is `1 / rsqrt(x)`, not a `SQRT` -- the same
+        inlining `normalize` gets, with the reciprocal in place of the
+        multiply.  The dot is the OPERAND's width, not the result's, which is
+        one component."""
+        module = self.module
+        _w = self._length_width(ins)
+        _dp = _opchain.dot_mnemonic(_w, _tc)
+        _div = _opchain.mnemonic_for_opcode(nodes.DIV, _tc)
+        if any(m is None or m.startswith("<") for m in (_dp, _div)):
+            raise NotEstablished("a length the image's tables do not name "
+                                 "for this type")
+        _t1 = self._fresh(True)
+        self.lines.append(_emit(_dp, "%s.x" % _t1, v, v))
+        _t2 = self._fresh(True)
+        self.lines.append(_emit(_rsq, "%s.x" % _t2, "%s.x" % _t1))
+        dst = self._fresh(True)
+        self.lines.append(_emit(_div, "%s.x" % dst, "{1, 0, 0, 0}",
+                                "%s.x" % _t2))
+        self.values[ins.result] = dst
+        self.comps[ins.result] = (0, 0, 0, 0)
+
+    def _distance(self, ins, forms, _tc, _add, _rsq):
+        """`distance(a, b)` IS `length(b - a)` (notes/114 \u00a749).
+        `extshape.py` measures exactly `length`'s three nodes plus one 0x83
+        (`ADD`) of the OPERAND's width, and `probes/0108_ds_a.vert` prints the
+        subtraction with the FIRST operand negated:
+
+            ADD.F32 R4.xyz, vertex.attrib[1], -vertex.attrib[0];
+        """
+        _w = self._length_width(ins)
+        _t0 = self._fresh(True)
+        self.lines.append(_emit(_add, _t0 + _opchain.dest_suffix(_w),
+                                forms[1], "-" + forms[0]))
+        self._length(ins, _t0, _tc, _rsq)
+
+    def _length_width(self, ins):
+        """The width of `length`/`distance`'s OPERAND -- the dot's width.
+        The result is one component, so the result type cannot give it."""
+        module = self.module
+        _a = ins.args()[2]
+        _d = module.result_insn.get(_a) or module.constants.get(_a)
+        _w = _components(module, _d.result_type) if (
+            _d is not None and _d.has_result_type) else None
+        if not _w or not 2 <= _w <= 4:
+            raise NotEstablished("a length whose operand is not a vector")
+        return _w
 
     def _normalize(self, ins, v, _dp, _rsq, _mul):
         _t1 = self._fresh(True)
@@ -583,7 +663,7 @@ class ExtInstOps(object):
 
     def _step(self, ins, forms, _cmp):
         """step(edge, x) = x >= edge, truncated to 0 or 1.  ONE band temp,
-        written three times (`op_step.vert` is `1 R-regs`)."""
+        written three times (`0031_op_step.vert` is `1 R-regs`)."""
         _trn, _i2f, _sge = _cmp[0], _cmp[1], _cmp[2]
         dst = self._fresh(True)
         self.lines.append(_emit(_sge, dst, forms[1], forms[0]))
@@ -594,7 +674,7 @@ class ExtInstOps(object):
     def _sign(self, ins, v, _cmp, _add):
         """sign(v) = (v > 0) - (v < 0), each side compared, truncated and
         converted.  TWO band temps, and the subtract reuses the NEGATIVE
-        side's (`un_sign.vert` is `2 R-regs` and its `ADD` writes `R1`).
+        side's (`0039_un_sign.vert` is `2 R-regs` and its `ADD` writes `R1`).
 
         THE POSITIVE SIDE TAKES THE LOWER REGISTER: the listing gives it `R0`
         and the negative side `R1`, so its vreg is the earlier one even
@@ -610,7 +690,7 @@ class ExtInstOps(object):
         self.values[ins.result] = _neg
 
     def _mix(self, ins, forms, _add, _mul):
-        """ONE band temp, written three times: `op_mix.vert` is `1 R-regs`,
+        """ONE band temp, written three times: `0114_op_mix.vert` is `1 R-regs`,
         and `tools/bandsize.py` measures `normalize` at 3 against this
         shape's 1.  So the three instructions are one vreg, not three."""
         dst = self._fresh(True)
@@ -622,7 +702,7 @@ class ExtInstOps(object):
     # -- sqrt and cross -------------------------------------------------------
 
     def _sqrt(self, ins, which, forms, _sh):
-        """SQRT (notes/60), from `un_sqrt.vert`'s nodes: the transcendental
+        """SQRT (notes/60), from `0033_un_sqrt.vert`'s nodes: the transcendental
         family's shape for inversesqrt, then a reciprocal per component and a
         multiply by one --
           RSQ t_c.x, a.c        x4  names, seq 2,3,4,5
@@ -630,8 +710,28 @@ class ExtInstOps(object):
           RCP r.c, t_c.x        x4  ONE lowering vreg, seq 7
           MUL m, r, {1}.x       x1  a name, seq 7 with the RCPs
         The RCPs read the RSQ results directly; the construct is a stored
-        name, so it is emitted although nothing reads it.  Only the measured
-        operand form: a plain vec4."""
+        name, so it is emitted although nothing reads it.
+
+        WIDTH 2 IS THE SAME SHAPE, read off `compute_skydome-1.comp` rather
+        than assumed from the vec4 one (notes/126 §1) -- two RSQs, a
+        two-lane construct, two RCPs into ONE vreg, and the multiply by one
+        under the narrow mask:
+
+            RSQ.F32 R2.x, R0.y;   RSQ.F32 R0.x, R8.x;
+            MOV.F R12.y, R2.x;    MOV.F R12.x, R0;
+            RCP.F32 R3.y, R2.x;   RCP.F32 R3.x, R0.x;
+            MUL.F32 R11.xy, R3, {1, 0, 0, 0}.x;
+
+        WIDTH 3 IS THE SAME AGAIN, read off `post_taa_resolve.frag`:
+
+            RSQ.F32 R0.x, R4.x;  RSQ.F32 R1.x, R4.y;  RSQ.F32 R2.x, R4.z;
+            RCP.F32 R6.z, R2.x;  RCP.F32 R6.y, R1.x;  RCP.F32 R6.x, R0.x;
+            MUL.F32 R7.xyz, R6, {1, 0, 0, 0}.x;
+
+        Width 1 has an arm of its own (`RSQ` then a one-component `DIV`),
+        so every width is now read -- each where it was SEEN, which is the
+        point `0114_mx_v3.vert` made for `mix`: a narrower width is not
+        always the wide shape with a smaller mask (notes/114 §50)."""
         if which != GLSL450.Sqrt:
             return False
         module = self.module
@@ -640,21 +740,41 @@ class ExtInstOps(object):
         _rcp = _opchain.mnemonic_for_opcode(nodes.RCP, _tc)
         _mul = _opchain.mnemonic_for_opcode(nodes.MUL, _tc)
         _mv = _opchain.mnemonic_for_opcode(nodes.MOV, _tc)
+        _n = _components(module, ins.result_type)
+        _ds = _opchain.dest_suffix(_n) if _n else None
         if (len(forms) != 1
-                or _components(module, ins.result_type) != 4
+                or _n not in (2, 3, 4) or _ds is None
                 or forms[0].startswith(("{",) + _MODIFIED)
                 or _lex.has_swizzle_suffix(forms[0])
-                or self.comps.get(ins.args()[2], _IDENTITY) != _IDENTITY
                 or any(m is None or m.startswith("<")
                        for m in (_rsq, _rcp, _mul, _mv))):
+            if ENV.get("G2S_SQDBG"):
+                import sys as _s
+                print("SQDBG n=%r ds=%r forms=%r swz=%r comps=%r mns=%r" % (
+                    _n, _ds, forms,
+                    _lex.has_swizzle_suffix(forms[0]) if forms else None,
+                    self.comps.get(ins.args()[2]),
+                    [_rsq, _rcp, _mul, _mv]), file=_s.stderr)
             raise NotEstablished(
                 "GLSL.std.450 31 (sqrt) on an operand other than a plain "
-                "vec4: not measured")
+                "vec2, vec3 or vec4: not measured")
+        # EACH LANE READS ITS OWN SOURCE, through the same two steps every
+        # other scalarised op in this file uses (`_scalar_wide`): the merge
+        # pair's written value where there is one, else the operand's
+        # component map.  `compute_skydome-1.comp`'s two RSQs read `R0.y`
+        # and `R8.x` -- two different registers for one vec2 operand, which
+        # is that mechanism and not a swizzle of one name.
+        _ids = ins.args()[2:]
         _ts = []
-        for _c in range(4):
+        for _c in range(_n):
             _t = self._fresh(True)
-            self.lines.append(_emit(_rsq, "%s.x" % _t, "%s.%s" % (
-                forms[0], _COMPONENTS[_c])))
+            _ml = self._merge_lane_source(_ids[0], _c)
+            if _ml is not None:
+                _src = "%s.%s" % (_ml[0], _COMPONENTS[_ml[1]])
+            else:
+                _src = "%s.%s" % (forms[0], _COMPONENTS[
+                    self.comps.get(_ids[0], _IDENTITY)[_c]])
+            self.lines.append(_emit(_rsq, "%s.x" % _t, _src))
             _ts.append(_t)
         _v, _h = self._assemble([(_t, 0) for _t in _ts], _mv)
         # the construct is a stored NAME (record 6, before the MUL's 7), so
@@ -662,19 +782,19 @@ class ExtInstOps(object):
         self.band.add(int(_v[1:]))
         _r = self._fresh(is_wide=True)
         _tie = []
-        for _c in range(4):
+        for _c in range(_n):
             _tie.append(len(self.lines))
             self.lines.append(_emit(_rcp, "%s.%s" % (_r, _COMPONENTS[_c]),
                                     "%s.x" % _ts[_c]))
         dst = self._fresh(True)
         _tie.append(len(self.lines))
-        self.lines.append(_emit(_mul, dst, _r, _ONE + ".x"))
+        self.lines.append(_emit(_mul, dst + _ds, _r, _ONE + ".x"))
         self.ties.append(_tie)
         self.values[ins.result] = dst
         return True
 
     def _cross(self, ins, which, forms, _sh):
-        """CROSS (notes/59), from `op_cross.vert`'s nodes:
+        """CROSS (notes/59), from `0052_op_cross.vert`'s nodes:
           MUL t.xyz, a.yzxw, b.zxyw      seq 2, a lowering temp
           MUL u.xyz, a.zxyw, b.yzxw      seq 5, a lowering temp
           ADD r.xyz, t, -u               seq 1, a stored NAME

@@ -188,7 +188,7 @@ def _uses_builtin(module, builtin):
 def _unreferenced_block(module, vid, kind):
     """Is this uniform block never referenced by any function?
 
-    Such a block has NO binding in the listing (`ce_n29.vert`, `chr_eye`
+    Such a block has NO binding in the listing (`0072_ce_n29.vert`, `chr_eye`
     cut before its shadow matrix is read):
 
         #semantic cb_shadow.__defaultname_430 : BUFFER[-1]
@@ -458,7 +458,7 @@ def _local_arrays(module):
     """
     out = []
     # ONLY AN ARRAY INDEXED BY A VALUE goes to local memory (notes/87): the
-    # cut `mq_n8.frag` stores `ImmediateConstBuffer` and never indexes it,
+    # cut `0091_mq_n8.frag` stores `ImmediateConstBuffer` and never indexes it,
     # and its listing has no `__LOCAL`, no `lmem` and no element stores to
     # memory -- the array is kept in registers.
     dyn = _dynamically_indexed(module)
@@ -481,7 +481,7 @@ def _lmem_arrays(module):
     """[(variable id, element count)] in `lmem<k>` order (`_local_arrays`).
 
     The count is the array type's length: `TEMP lmem0[4];` for `uvec4[4]`
-    (`lm_icb.frag`), `TEMP lmem0[3];` for `vec4[3]` (`lm_icbf.frag`).
+    (`0071_lm_icb.frag`), `TEMP lmem0[3];` for `vec4[3]` (`0071_lm_icbf.frag`).
     """
     from glasmlib.operands import _scalar_value
     out = []
@@ -502,8 +502,8 @@ def _fold_identities(module):
 
     `x + 0`, `0 + x`, `x - 0`, `x * 1` and `1 * x` on SCALARS, integer and
     float alike, build no node: the value IS the other operand.  Measured on
-    `ia_z.frag` (`(j >> 2) + 0`, `m * 1`, `0 + m`: no ADD or MUL, the
-    stores read the SHR and the attribute) and `fa_z.frag` (`a.x + 0.0`,
+    `0089_ia_z.frag` (`(j >> 2) + 0`, `m * 1`, `0 + m`: no ADD or MUL, the
+    stores read the SHR and the attribute) and `0089_fa_z.frag` (`a.x + 0.0`,
     `a.y * 1.0`, `1.0 * a.z`, `a.w - 0.0`: each a gather of the attribute's
     component, as a plain extract).  The corpus's structured-buffer
     addresses are `(k >> 2) + 0` everywhere.

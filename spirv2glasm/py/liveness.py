@@ -1,6 +1,7 @@
 """liveness.py -- `f_7100043460`, the interference graph, transcribed.
 
-This is the allocator object's vt[16] (notes/54 §10): the function that
+This is the allocator object's vt[16] (notes/54 §1 for the vtable row,
+notes/52 §7 for the sweep itself): the function that
 builds every vreg record's neighbour list `record[216]` and its first-def and
 last-use positions `record[56]` / `record[60]`, which py/regalloc.py then
 colours.  It runs on a model of the compiler's own IR -- positions (the
@@ -97,8 +98,10 @@ def vt0(node):
 
 # f_7100059f3c through cg->vt[464] = f_7100059f70: a byte table at .rodata
 # 0x1168a3b indexed by `op - 2`; an entry of 0 returns false, 1 true, and an
-# opcode outside 2..0xcb is true.  Decoded from the image (notes/54 §10);
-# these are the opcodes it is FALSE for.
+# opcode outside 2..0xcb is true.  `vt[464]` is the predicate notes/31 and
+# notes/51 use; NO NOTE holds this table -- it was decoded from the image at
+# the address above and the decode is recorded HERE, which is why the
+# address is in the comment.  These are the opcodes it is FALSE for.
 _VT464_FALSE = frozenset([0x2, 0x8, 0x20, 0x21, 0x25, 0x26, 0x27] +
                          list(range(0x29, 0x31)) + list(range(0x32, 0x37)) +
                          [0x5f])
